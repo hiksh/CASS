@@ -30,8 +30,9 @@ from .config import (
     ELBOW_GAP_RATIO, ELBOW_MIN_K,
     PILOT_N, PILOT_MIN_SPEARMAN,
     RANDOM_SEED,
+    UMAP_PARAMS_FAST,   # dict 객체 직접 참조 — in-place 수정으로 evaluator에도 반영
 )
-from .evaluator import evaluate_subset
+from .evaluator import evaluate_subset, evaluate_subset_full_metrics
 
 
 # ── Elbow 검출 ────────────────────────────────────────────────────────────────
@@ -240,34 +241,147 @@ def _full_reeval(
 ) -> pd.DataFrame:
     """
     Fast 결과에서 Elbow K를 결정하고 상위 K개를 Full UMAP으로 재평가합니다.
+    Silhouette 외에 Boundary_Mean, Camouflage@t 도 함께 수집합니다.
+    (동일 임베딩 재사용 — UMAP 추가 실행 없음)
 
     Returns:
-        full_df: 상위 K개의 full_sil이 채워진 DataFrame
+        full_df: 상위 K개에 full_sil / boundary_mean / camouflage 컬럼이 채워진 DataFrame
     """
-    # 내림차순 정렬
-    sorted_df = fast_df.sort_values("fast_sil", ascending=False).reset_index(drop=True)
+    sorted_df   = fast_df.sort_values("fast_sil", ascending=False).reset_index(drop=True)
     scores_desc = sorted_df["fast_sil"].values
 
-    K = find_elbow(scores_desc)
+    K      = find_elbow(scores_desc)
     top_df = sorted_df.head(K).copy()
 
     print(f"\n  [Elbow] Fast Sil 분포: max={scores_desc[0]:.4f}  min={scores_desc[-1]:.4f}")
     print(f"  [Elbow] K = {K}  (전체 {len(sorted_df)}개 중 상위 {K}개 Full 재평가)")
     print(f"\n  [2단계] Full UMAP 재평가 ({K}개) ...")
 
-    full_sils = []
+    full_sils, boundary_means, camouflages = [], [], []
+
     for i, row in top_df.iterrows():
         feats = row["features"]
+        n     = len(full_sils) + 1
         try:
-            sil, _ = evaluate_subset(X_scaled, y, all_feature_names, feats, fast=False)
+            sil, bm, cam, _ = evaluate_subset_full_metrics(
+                X_scaled, y, all_feature_names, feats
+            )
+            cam_val = list(cam.values())[0]   # 첫 번째 임계값 (기본 @1.0)
             full_sils.append(round(sil, 4))
-            print(f"    [{len(full_sils):>2}/{K}] {feats} | full_sil={sil:+.4f}")
+            boundary_means.append(round(bm, 4))
+            camouflages.append(round(cam_val, 4))
+            print(
+                f"    [{n:>2}/{K}] {feats} "
+                f"| full_sil={sil:+.4f}  bm={bm:.4f}  cam={cam_val:.4f}"
+            )
         except Exception as e:
             full_sils.append(float("nan"))
-            print(f"    [{len(full_sils):>2}/{K}] 오류: {e}")
+            boundary_means.append(float("nan"))
+            camouflages.append(float("nan"))
+            print(f"    [{n:>2}/{K}] 오류: {e}")
 
-    top_df["full_sil"] = full_sils
+    top_df["full_sil"]      = full_sils
+    top_df["boundary_mean"] = boundary_means
+    top_df["camouflage"]    = camouflages
     return top_df
+
+
+# ── Reference Camouflage 계산 ─────────────────────────────────────────────────
+
+def compute_reference_camouflage(
+    X_scaled: np.ndarray,
+    y: np.ndarray,
+    all_feature_names: list,
+    ref_features: list,
+) -> float:
+    """
+    Reference 피처 조합(umar2024 등)에 대해 Full UMAP을 실행하고
+    Camouflage@t 값을 반환합니다. 이 값이 제약 기반 선택의 임계값이 됩니다.
+
+    Args:
+        ref_features: LITERATURE_BASELINES의 피처 목록
+
+    Returns:
+        cam_threshold: float — Camouflage@t (첫 번째 임계값 기준)
+    """
+    from .config import CAMOUFLAGE_THRESHOLDS
+    t = CAMOUFLAGE_THRESHOLDS[0]
+    print(
+        f"\n[Reference] umar2024 Camouflage@{t} 기준값 계산 중 "
+        f"({len(ref_features)}개 피처) ..."
+    )
+    _, _, cam, _ = evaluate_subset_full_metrics(
+        X_scaled, y, all_feature_names, ref_features
+    )
+    cam_val = cam.get(t, list(cam.values())[0])
+    print(f"  → Camouflage@{t} (umar2024) = {cam_val:.4f}  ← 제약 임계값으로 사용")
+    return float(cam_val), emb
+
+
+# ── Pilot 자동 재시도 ─────────────────────────────────────────────────────────
+
+def pilot_validation_with_retry(
+    X_scaled: np.ndarray,
+    y: np.ndarray,
+    candidate_features: list,
+    all_feature_names: list,
+    n: int = None,
+    max_retries: int = 3,
+    neighbor_step: int = 30,
+) -> tuple[float, pd.DataFrame]:
+    """
+    Pilot 검증 + r < PILOT_MIN_SPEARMAN 시 n_neighbors 자동 증가 재시도.
+
+    UMAP_PARAMS_FAST['n_neighbors'] 를 in-place로 수정하여
+    evaluator.py의 Fast 스크리닝에도 즉시 반영됩니다.
+
+    재시도 전략:
+      시도 0: base n_neighbors (config 기본값)
+      시도 k: base + k * neighbor_step  (기본 30씩 증가)
+
+    max_retries 초과 시 n_neighbors를 원래 값으로 복원하고
+    경고와 함께 파이프라인을 계속 진행합니다.
+
+    Args:
+        max_retries  : 재시도 최대 횟수 (기본 3 → 최대 base + 90)
+        neighbor_step: 재시도마다 증가할 n_neighbors 폭 (기본 30)
+
+    Returns:
+        spearman_r : 최종 Spearman 상관계수
+        pilot_df   : 최종 검증 결과 DataFrame
+    """
+    base_neighbors = UMAP_PARAMS_FAST["n_neighbors"]
+
+    for attempt in range(max_retries + 1):
+        if attempt > 0:
+            new_n = base_neighbors + attempt * neighbor_step
+            UMAP_PARAMS_FAST["n_neighbors"] = new_n
+            print(
+                f"\n[Pilot 재시도 {attempt}/{max_retries}] "
+                f"n_neighbors {base_neighbors} → {new_n}"
+            )
+
+        r, pilot_df = pilot_validation(X_scaled, y, candidate_features, all_feature_names, n=n)
+
+        if not np.isnan(r) and r >= PILOT_MIN_SPEARMAN:
+            if attempt > 0:
+                print(
+                    f"  ✓ n_neighbors={UMAP_PARAMS_FAST['n_neighbors']} 에서 통과 "
+                    f"(r={r:.4f} ≥ {PILOT_MIN_SPEARMAN})"
+                )
+                print(
+                    f"  이후 Fast 스크리닝은 n_neighbors="
+                    f"{UMAP_PARAMS_FAST['n_neighbors']} 로 진행됩니다."
+                )
+            return r, pilot_df
+
+    # 최대 재시도 초과 → 원복
+    UMAP_PARAMS_FAST["n_neighbors"] = base_neighbors
+    print(
+        f"\n[Pilot] 최대 재시도 {max_retries}회 초과 (최종 r={r:.4f}). "
+        f"n_neighbors={base_neighbors} 으로 복원하고 경고와 함께 진행합니다."
+    )
+    return r, pilot_df
 
 
 # ── 공개 인터페이스 ───────────────────────────────────────────────────────────
@@ -279,15 +393,27 @@ def search(
     all_feature_names: list,
     mode: str = None,
     n_subsets: int = None,
+    cam_threshold: float = None,
 ) -> tuple[list, pd.DataFrame]:
     """
     2단계 스크리닝 탐색 파이프라인.
 
+    Args:
+        cam_threshold: Camouflage@t 제약 임계값 (None → 제약 없이 Silhouette만 기준).
+                       umar2024 baseline의 실측값을 전달하면 제약 기반 선택을 수행합니다.
+
+                       선택 로직:
+                         1) camouflage ≤ cam_threshold 를 만족하는 후보만 생존
+                         2) 생존 후보 중 full_sil 최댓값 선택
+                         3) 생존 후보가 없으면 제약 완화 후 full_sil 최댓값 선택 (fallback)
+
     Returns:
-        best_subset: Full Silhouette 최고 피처 리스트
-        results_df : 최종 결과 DataFrame
-                     greedy: (step, added_feature, n_features, features, fast_sil, full_sil)
-                     random: (subset_id, n_features, features, fast_sil, full_sil)
+        best_subset: 선택된 최적 피처 리스트
+        results_df : 탐색 결과 DataFrame
+                     greedy: (step, added_feature, n_features, features, fast_sil,
+                              full_sil, boundary_mean, camouflage)
+                     random: (subset_id, n_features, features, fast_sil,
+                              full_sil, boundary_mean, camouflage)
     """
     if mode is None:
         mode = SEARCH_MODE
@@ -295,6 +421,8 @@ def search(
         n_subsets = N_RANDOM_SUBSETS
 
     print(f"\n[Search] 2단계 스크리닝 (mode={mode})")
+    if cam_threshold is not None:
+        print(f"  제약 기준  : Camouflage@t ≤ {cam_threshold:.4f} (umar2024 실측값)")
 
     # 1단계: Fast 스크리닝
     if mode == "greedy":
@@ -307,16 +435,43 @@ def search(
     if fast_df.empty:
         return [], fast_df
 
-    # 2단계: Elbow K → Full 재평가
+    # 2단계: Elbow K → Full 재평가 (full_sil + boundary_mean + camouflage)
     results_df = _full_reeval(fast_df, X_scaled, y, all_feature_names)
 
-    # 최적 서브셋 (full_sil 기준)
+    # ── 제약 기반 최적 서브셋 선택 ───────────────────────────────────────────
     valid = results_df.dropna(subset=["full_sil"])
     if valid.empty:
         return [], results_df
 
-    best_subset = valid.loc[valid["full_sil"].idxmax(), "features"]
-    best_full   = valid["full_sil"].max()
-    print(f"\n  최적 서브셋 (full_sil={best_full:.4f}): {best_subset}")
+    if cam_threshold is not None and "camouflage" in valid.columns:
+        survived = valid[valid["camouflage"] <= cam_threshold].dropna(subset=["camouflage"])
+        n_total  = len(valid)
+        n_drop   = n_total - len(survived)
+
+        if survived.empty:
+            print(
+                f"\n  [Constraint] 경고: camouflage ≤ {cam_threshold:.4f} 를 만족하는 "
+                f"후보가 없습니다. 제약 완화 → full_sil 기준으로 fallback."
+            )
+            survived = valid
+        else:
+            print(
+                f"\n  [Constraint] camouflage ≤ {cam_threshold:.4f}: "
+                f"{len(survived)}/{n_total}개 생존 ({n_drop}개 탈락)"
+            )
+
+        best_idx    = survived["full_sil"].idxmax()
+        best_subset = survived.loc[best_idx, "features"]
+        best_full   = survived.loc[best_idx, "full_sil"]
+        best_cam    = survived.loc[best_idx, "camouflage"]
+        best_bm     = survived.loc[best_idx, "boundary_mean"]
+        print(
+            f"  최적 서브셋 (full_sil={best_full:.4f} | "
+            f"bm={best_bm:.4f} | cam={best_cam:.4f}): {best_subset}"
+        )
+    else:
+        best_subset = valid.loc[valid["full_sil"].idxmax(), "features"]
+        best_full   = valid["full_sil"].max()
+        print(f"\n  최적 서브셋 (full_sil={best_full:.4f}): {best_subset}")
 
     return best_subset, results_df

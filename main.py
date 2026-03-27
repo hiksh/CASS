@@ -27,7 +27,9 @@ from src.config import (
 )
 from src.data_loader import load_dataset
 from src.pre_filter import pre_filter
-from src.search_algo import search, pilot_validation
+from src.search_algo import (
+    search, pilot_validation, pilot_validation_with_retry, compute_reference_camouflage,
+)
 from src.exporter import export_comparison_sets, build_comparison_groups
 from src.analyzer import analyze_comparison_groups, plot_comparison_heatmap
 from src.config import N_RANDOM_BASELINE
@@ -151,9 +153,23 @@ def plot_pilot(pilot_df: pd.DataFrame, spearman_r: float, save_path) -> None:
     _sub(f"저장: {save_path}")
 
 
-def plot_two_phase(results_df: pd.DataFrame, mode: str, save_path) -> None:
-    """Fast vs Full Silhouette 비교 플롯."""
+def plot_two_phase(
+    results_df: pd.DataFrame,
+    mode: str,
+    save_path,
+    cam_threshold: float = None,
+    best_features: list = None,
+) -> None:
+    """
+    Fast vs Full Silhouette 비교 플롯.
+
+    cam_threshold 가 주어지면 Top-K 포인트를 제약 통과(초록)/탈락(주황)으로 구분하고,
+    최종 선택된 서브셋(best_features)에 금색 별 마커를 표시합니다.
+    """
     has_full = "full_sil" in results_df.columns and results_df["full_sil"].notna().any()
+    has_cam  = (cam_threshold is not None
+                and "camouflage" in results_df.columns
+                and results_df["camouflage"].notna().any())
     x_col = "step" if mode == "greedy" else "subset_id"
 
     fig, ax = plt.subplots(figsize=(11, 5))
@@ -167,16 +183,58 @@ def plot_two_phase(results_df: pd.DataFrame, mode: str, save_path) -> None:
             color="steelblue", alpha=0.5, markersize=4, label="Fast Sil (스크리닝)")
 
     if has_full:
-        top_idx = results_df.dropna(subset=["full_sil"]).index
+        top_df  = results_df.dropna(subset=["full_sil"])
+        top_idx = top_df.index
         x_top   = x_all[top_idx] if x_col in results_df.columns else top_idx
-        ax.scatter(x_top, results_df.loc[top_idx, "full_sil"],
-                   color="tomato", s=80, zorder=5, label="Full Sil (재평가)")
+
+        if has_cam:
+            passed = top_df["camouflage"] <= cam_threshold
+            # 통과 (초록)
+            if passed.any():
+                ax.scatter(
+                    x_top[passed.values], top_df.loc[passed, "full_sil"],
+                    color="#2ECC71", s=90, zorder=5,
+                    label=f"Full Sil — 제약 통과 (cam ≤ {cam_threshold:.3f})",
+                )
+            # 탈락 (주황)
+            if (~passed).any():
+                ax.scatter(
+                    x_top[(~passed).values], top_df.loc[~passed, "full_sil"],
+                    color="#E67E22", s=90, zorder=5, marker="X",
+                    label=f"Full Sil — 제약 탈락 (cam > {cam_threshold:.3f})",
+                )
+            # 제약 임계선
+            ax.axhline(
+                y=results_df["full_sil"].dropna().min() - 0.005,
+                color="gray", linewidth=0, alpha=0,   # 공간 확보용 invisible
+            )
+        else:
+            ax.scatter(x_top, top_df["full_sil"],
+                       color="tomato", s=80, zorder=5, label="Full Sil (재평가)")
+
+    # 최종 선택 포인트 (금색 별)
+    if best_features is not None and has_full:
+        best_set = frozenset(best_features)
+        for pos, (ridx, row) in enumerate(results_df.iterrows()):
+            feats = row.get("features")
+            if feats is not None and frozenset(feats) == best_set and pd.notna(row.get("full_sil")):
+                bx = x_all[ridx] if x_col in results_df.columns else ridx
+                ax.scatter(
+                    bx, row["full_sil"],
+                    color="gold", s=250, zorder=10, marker="*",
+                    edgecolors="black", linewidths=0.8,
+                    label="최종 선택 (best)",
+                )
+                break
 
     xlabel = "Greedy Step" if mode == "greedy" else "Subset ID (fast_sil 정렬)"
+    title  = "2단계 스크리닝: Fast → Full Silhouette"
+    if cam_threshold is not None:
+        title += f"\n제약 기준: Camouflage ≤ {cam_threshold:.4f} (umar2024)"
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Silhouette Score")
-    ax.set_title("2단계 스크리닝: Fast → Full Silhouette", fontsize=12, fontweight="bold")
-    ax.legend(fontsize=10)
+    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.legend(fontsize=9)
     ax.grid(alpha=0.3)
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
@@ -230,15 +288,37 @@ def main(args) -> None:
     # ── 2.5 [선택] Pilot 검증 ───────────────────────────────────────────────
     if args.pilot:
         _header(f"[Pilot]", "Fast ↔ Full Silhouette 상관 검증")
-        spearman_r, pilot_df = pilot_validation(
-            X_scaled, y, top_features, feature_names
+        spearman_r, pilot_df = pilot_validation_with_retry(
+            X_scaled, y, top_features, feature_names,
         )
         pilot_df.to_csv(LOGS_DIR / "pilot_validation.csv", index=False)
         plot_pilot(pilot_df, spearman_r, FIGURES_DIR / "pilot_fast_vs_full.png")
 
         if not np.isnan(spearman_r) and spearman_r < PILOT_MIN_SPEARMAN:
-            _sub(f"[경고] Spearman r={spearman_r:.4f} < {PILOT_MIN_SPEARMAN}")
-            _sub("UMAP_PARAMS_FAST 조정 후 재실행을 권장합니다.")
+            _sub(f"[경고] 최대 재시도 후에도 Spearman r={spearman_r:.4f} < {PILOT_MIN_SPEARMAN}")
+            _sub("Fast 스크리닝 신뢰도가 낮을 수 있습니다. 결과 해석에 주의하세요.")
+
+    # ── 2.7 Reference Camouflage 기준값 계산 (umar2024) ─────────────────────
+    from src.config import LITERATURE_BASELINES
+    _header(f"[2.7/{total_stages}]", "Reference Camouflage 기준값 계산 (umar2024)")
+    ref_features = [f for f in LITERATURE_BASELINES.get("umar2024", [])
+                    if f in list(feature_names)]
+    cam_threshold  = None
+    ref_embedding  = None
+    if ref_features:
+        cam_threshold, ref_embedding = compute_reference_camouflage(
+            X_scaled, y, feature_names, ref_features
+        )
+        _sub(f"umar2024 Camouflage 기준값 : {cam_threshold:.4f}")
+        _sub("이 값이 제약 임계값으로 사용됩니다.")
+        pd.DataFrame([{
+            "reference":     "umar2024",
+            "n_features":    len(ref_features),
+            "cam_threshold": cam_threshold,
+        }]).to_csv(LOGS_DIR / "reference_camouflage.csv", index=False)
+        _sub(f"기준값 저장: {LOGS_DIR / 'reference_camouflage.csv'}")
+    else:
+        _sub("[경고] umar2024 피처가 데이터셋에 없어 제약 없이 진행합니다.")
 
     # ── 3. 2단계 스크리닝 탐색 ──────────────────────────────────────────────
     _header(f"[3/{total_stages}]", f"2단계 스크리닝  (mode={args.mode})")
@@ -247,6 +327,7 @@ def main(args) -> None:
         X_scaled, y, top_features, feature_names,
         mode=args.mode,
         n_subsets=args.n_subsets,
+        cam_threshold=cam_threshold,
     )
     results_csv = LOGS_DIR / f"search_results_{args.mode}.csv"
     results_df.to_csv(results_csv, index=False)
@@ -260,7 +341,11 @@ def main(args) -> None:
 
     # ── 4. 시각화 ────────────────────────────────────────────────────────────
     _header(f"[4/{total_stages}]", "시각화")
-    plot_two_phase(results_df, args.mode, FIGURES_DIR / "two_phase_screening.png")
+    plot_two_phase(
+        results_df, args.mode, FIGURES_DIR / "two_phase_screening.png",
+        cam_threshold=cam_threshold,
+        best_features=best_subset if best_subset else None,
+    )
 
     if best_subset:
         plot_umap_best(
@@ -294,8 +379,12 @@ def main(args) -> None:
             print(f"\n[{stage}/{total_stages}] [경고] 최적 부분집합이 없어 Analyze를 건너뜁니다.")
         else:
             _header(f"[{stage}/{total_stages}]", "UMAP 수치 분석 및 히트맵")
+            precomputed_embeddings = (
+                {"lit_umar2024": ref_embedding} if ref_embedding is not None else {}
+            )
             metrics_df = analyze_comparison_groups(
                 groups, X_scaled, y, feature_names,
+                precomputed_embeddings=precomputed_embeddings,
             )
             if not metrics_df.empty:
                 plot_comparison_heatmap(
@@ -308,8 +397,22 @@ def main(args) -> None:
     print("CASS Pipeline 완료")
     print(_SEP2)
     if best_subset:
-        best_full = results_df["full_sil"].max()
+        valid_rows = results_df.dropna(subset=["full_sil"])
+        if cam_threshold is not None and "camouflage" in valid_rows.columns:
+            survived = valid_rows[valid_rows["camouflage"] <= cam_threshold]
+            if survived.empty:
+                survived = valid_rows
+            best_idx = survived["full_sil"].idxmax()
+            best_full = survived.loc[best_idx, "full_sil"]
+            best_bm   = survived.loc[best_idx, "boundary_mean"]
+            best_cam  = survived.loc[best_idx, "camouflage"]
+        else:
+            best_full = valid_rows["full_sil"].max()
+            best_bm   = float("nan")
+            best_cam  = float("nan")
         _sub(f"Full Silhouette  : {best_full:.4f}")
+        _sub(f"Boundary_Mean    : {best_bm:.4f}")
+        _sub(f"Camouflage@t     : {best_cam:.4f}  (기준: ≤ {cam_threshold:.4f})" if cam_threshold else f"Camouflage@t     : {best_cam:.4f}")
         _sub(f"최적 피처 수      : {len(best_subset)}개")
     _sub(f"로그 저장 위치    : {LOGS_DIR}")
     _sub(f"시각화 저장 위치  : {FIGURES_DIR}")

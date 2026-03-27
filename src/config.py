@@ -17,30 +17,76 @@ EXPORTS_DIR   = RESULTS_DIR / "exports"
 TRAIN_FILE = RAW_DIR / "training-flow.csv"
 TEST_FILE  = RAW_DIR / "test-flow.csv"
 
-# ── CICIDS2018 피처 (NetFlowGap 기준 27개) ───────────────────────────────────
+# ── CICIDS2018 전체 피처 (timestamp·레이블 컬럼 제외, 78개) ──────────────────
 ALL_FEATURES = [
-    "flow duration",    "tot fwd pkts",     "tot bwd pkts",
+    # 포트 / 프로토콜 / 플로우
+    "dst port",         "protocol",         "flow duration",
+    # 패킷 수 / 바이트 수
+    "tot fwd pkts",     "tot bwd pkts",
     "totlen fwd pkts",  "totlen bwd pkts",
-    "fwd pkt len max",  "fwd pkt len mean",  "fwd pkt len std",
-    "bwd pkt len max",  "bwd pkt len mean",  "pkt len mean",
-    "flow byts/s",      "flow pkts/s",       "fwd pkts/s",
-    "flow iat mean",    "flow iat std",      "flow iat max",
-    "fwd iat tot",      "fwd iat mean",
-    "syn flag cnt",     "ack flag cnt",      "psh flag cnt",  "fin flag cnt",
+    # 패킷 길이
+    "fwd pkt len max",  "fwd pkt len min",  "fwd pkt len mean", "fwd pkt len std",
+    "bwd pkt len max",  "bwd pkt len min",  "bwd pkt len mean", "bwd pkt len std",
+    # 처리율
+    "flow byts/s",      "flow pkts/s",
+    # 플로우 IAT
+    "flow iat mean",    "flow iat std",     "flow iat max",     "flow iat min",
+    # 순방향 IAT
+    "fwd iat tot",      "fwd iat mean",     "fwd iat std",      "fwd iat max",  "fwd iat min",
+    # 역방향 IAT
+    "bwd iat tot",      "bwd iat mean",     "bwd iat std",      "bwd iat max",  "bwd iat min",
+    # PSH / URG 플래그
+    "fwd psh flags",    "bwd psh flags",    "fwd urg flags",    "bwd urg flags",
+    # 헤더 / 처리율
+    "fwd header len",   "bwd header len",
+    "fwd pkts/s",       "bwd pkts/s",
+    # 패킷 길이 통계
+    "pkt len min",      "pkt len max",      "pkt len mean",     "pkt len std",  "pkt len var",
+    # 플래그 카운트
+    "fin flag cnt",     "syn flag cnt",     "rst flag cnt",     "psh flag cnt",
+    "ack flag cnt",     "urg flag cnt",     "cwe flag count",   "ece flag cnt",
+    # 비율 / 평균 크기
+    "down/up ratio",    "pkt size avg",     "fwd seg size avg", "bwd seg size avg",
+    # Bulk 통계 (CICIDS2018에서 대부분 0 — pre-filter에서 자연 탈락)
+    "fwd byts/b avg",   "fwd pkts/b avg",   "fwd blk rate avg",
+    "bwd byts/b avg",   "bwd pkts/b avg",   "bwd blk rate avg",
+    # 서브플로우
+    "subflow fwd pkts", "subflow fwd byts",
+    "subflow bwd pkts", "subflow bwd byts",
+    # 윈도우 / 세그먼트
     "init fwd win byts","init bwd win byts",
-    "active mean",      "idle mean",
+    "fwd act data pkts","fwd seg size min",
+    # Active / Idle
+    "active mean",      "active std",       "active max",       "active min",
+    "idle mean",        "idle std",         "idle max",         "idle min",
 ]
 
-# 로그 변환을 적용할 피처 (skewed 분포 보정)
+# 로그 변환을 적용할 피처 (skewed 분포 보정) — 음수가 될 수 없는 연속형만 포함
 LOG_FEATURES = [
-    "flow duration",    "totlen fwd pkts",  "totlen bwd pkts",
-    "flow byts/s",      "flow pkts/s",      "fwd pkts/s",
-    "fwd iat tot",      "fwd iat mean",
-    "flow iat mean",    "flow iat std",     "flow iat max",
-    "active mean",      "idle mean",
-    "tot fwd pkts",     "tot bwd pkts",
-    "fwd pkt len max",  "bwd pkt len max",
-    "init fwd win byts","init bwd win byts",
+    # 패킷 수 / 바이트 수
+    "tot fwd pkts",      "tot bwd pkts",
+    "totlen fwd pkts",   "totlen bwd pkts",
+    # 패킷 길이
+    "fwd pkt len max",   "fwd pkt len min",   "fwd pkt len mean",  "fwd pkt len std",
+    "bwd pkt len max",   "bwd pkt len min",   "bwd pkt len mean",  "bwd pkt len std",
+    "pkt len min",       "pkt len max",       "pkt len mean",      "pkt len std",
+    "pkt len var",       "pkt size avg",      "fwd seg size avg",  "bwd seg size avg",
+    # 처리율
+    "flow byts/s",       "flow pkts/s",
+    "fwd pkts/s",        "bwd pkts/s",
+    # IAT
+    "flow iat mean",     "flow iat std",      "flow iat max",
+    "fwd iat tot",       "fwd iat mean",      "fwd iat std",       "fwd iat max",
+    "bwd iat tot",       "bwd iat mean",      "bwd iat std",       "bwd iat max",
+    # 헤더 / 윈도우
+    "fwd header len",    "bwd header len",
+    "init fwd win byts", "init bwd win byts",
+    # 서브플로우
+    "subflow fwd pkts",  "subflow fwd byts",
+    "subflow bwd pkts",  "subflow bwd byts",
+    # Active / Idle
+    "active mean",       "active std",        "active max",
+    "idle mean",         "idle std",          "idle max",
 ]
 
 # ── UDBB 샘플링 (Benign:Attack = 3:1, 공격 단계 균등) ───────────────────────
@@ -109,18 +155,14 @@ N_RANDOM_BASELINE = 1
 
 # Literature 기준 피처 조합 — 논문별로 추가/수정 가능
 LITERATURE_BASELINES = {
-    "netflowgap": [
-        "flow duration",    "tot fwd pkts",     "tot bwd pkts",
-        "totlen fwd pkts",  "totlen bwd pkts",
-        "fwd pkt len max",  "fwd pkt len mean",  "fwd pkt len std",
-        "bwd pkt len max",  "bwd pkt len mean",  "pkt len mean",
-        "flow byts/s",      "flow pkts/s",       "fwd pkts/s",
-        "flow iat mean",    "flow iat std",      "flow iat max",
-        "fwd iat tot",      "fwd iat mean",
-        "syn flag cnt",     "ack flag cnt",      "psh flag cnt",  "fin flag cnt",
-        "init fwd win byts","init bwd win byts",
-        "active mean",      "idle mean",
+    # Umar et al. (2024) "Effects of feature selection and normalization
+    # on network intrusion detection", CSE-CIC-IDS2018 기준 12개
+    "umar2024": [
+        "tot fwd pkts",     "totlen fwd pkts",
+        "bwd pkt len max",  "flow pkts/s",
+        "fwd iat mean",     "bwd iat tot",      "bwd iat mean",
+        "rst flag cnt",     "urg flag cnt",
+        "init fwd win byts","fwd seg size min",
+        "idle max",
     ],
-    # 새 논문 기준 추가 예시:
-    # "cicids2018_paper": ["feature_a", "feature_b", ...],
 }

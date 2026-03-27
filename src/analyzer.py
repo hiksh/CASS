@@ -140,21 +140,26 @@ def analyze_comparison_groups(
     X_scaled: np.ndarray,
     y: np.ndarray,
     feature_names: list,
+    precomputed_embeddings: dict = None,
 ) -> pd.DataFrame:
     """
     비교군별 Full UMAP 실행 → 8개 지표 계산.
 
     Args:
-        groups       : {group_name: [feature, ...]} 딕셔너리
-        X_scaled     : 전처리된 훈련 피처 행렬
-        y            : 레이블 (0=benign, 1=attack)
-        feature_names: 로드된 전체 피처 이름 목록
+        groups                : {group_name: [feature, ...]} 딕셔너리
+        X_scaled              : 전처리된 훈련 피처 행렬
+        y                     : 레이블 (0=benign, 1=attack)
+        feature_names         : 로드된 전체 피처 이름 목록
+        precomputed_embeddings: {group_name: np.ndarray} — 사전 계산된 임베딩.
+                                Stage 2.7에서 umar2024 UMAP이 이미 실행된 경우
+                                'lit_umar2024' 키로 전달하면 중복 실행을 방지합니다.
 
     Returns:
         metrics_df: DataFrame (index=group, cols=8 metrics + n_features)
     """
     feat_list = list(feature_names)
     rng = np.random.default_rng(RANDOM_SEED)
+    precomputed_embeddings = precomputed_embeddings or {}
 
     SEP  = "=" * 65
     SEP2 = "-" * 65
@@ -174,10 +179,14 @@ def analyze_comparison_groups(
         idx   = [feat_list.index(f) for f in feats if f in feat_list]
         X_sub = X_scaled[:, idx]
 
-        # Full UMAP
-        print(f"    UMAP 실행 중 (n_neighbors={UMAP_PARAMS['n_neighbors']}) ...")
-        reducer = UMAP(**UMAP_PARAMS)
-        emb     = np.asarray(reducer.fit_transform(X_sub))
+        # Full UMAP — 사전 계산된 임베딩이 있으면 재사용
+        if name in precomputed_embeddings:
+            emb = precomputed_embeddings[name]
+            print(f"    UMAP 임베딩 재사용 (Stage 2.7 사전 계산, 중복 실행 방지)")
+        else:
+            print(f"    UMAP 실행 중 (n_neighbors={UMAP_PARAMS['n_neighbors']}) ...")
+            reducer = UMAP(**UMAP_PARAMS)
+            emb     = np.asarray(reducer.fit_transform(X_sub))
 
         # 8개 지표 계산
         print(f"    수치 분석 중 ...")

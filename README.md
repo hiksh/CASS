@@ -41,6 +41,11 @@ data/raw/training-flow.csv
          │            Spearman r ≥ 0.7 이면 Fast가 유효한 proxy
          │
          ▼
+[Stage 2.7] Reference Camouflage 기준값 계산
+            netflowgap 피처 조합으로 Full UMAP 실행
+            → Camouflage@1.0 실측값 추출 → 제약 임계값(θ)으로 저장
+         │
+         ▼
 [Stage 4] 2단계 스크리닝 탐색
           ┌─ 1단계: Fast UMAP (n_neighbors=30) 으로 전체 후보 평가
           │         --mode greedy  : 전진 선택 (피처 1개씩 추가)
@@ -49,7 +54,12 @@ data/raw/training-flow.csv
           ├─ Elbow 검출: fast_sil 내림차순 gap → 상위 K 결정
           │
           └─ 2단계: Full UMAP (n_neighbors=150) 으로 상위 K 재평가
-                    → best_features 확정
+                    각 서브셋마다 full_sil + boundary_mean + camouflage 계산
+                    (동일 임베딩 재사용 — k-NN 1회 추가)
+                    │
+                    └─ 제약 기반 최종 선택
+                         camouflage ≤ θ(netflowgap) 를 만족하는 후보 중
+                         full_sil 최댓값 → best_features 확정
          │
          ▼
 [Stage 5] 시각화 & 저장
@@ -276,6 +286,48 @@ avg_rank(f) = ( r_tree(f) + r_anova(f) ) / 2
 
 ---
 
+### 제약 기반 최적 서브셋 선택 (Constraint-based Selection)
+
+CASS의 핵심 기여는 **"UMAP 클러스터 분리도가 높은 피처 조합이 ML 탐지 성능도 높다"** 는 주장입니다. 그런데 Silhouette Score만 최적화하면 경계면 근방의 **위장 공격(Camouflage)** 이 묵인될 수 있습니다. 이를 방지하기 위해 netflowgap 실측값을 **외부 안전 기준선** 으로 사용합니다.
+
+#### 선택 절차
+
+```
+Step 1 — Reference 기준값 계산
+  netflowgap 피처 27개로 Full UMAP 실행
+  → Camouflage@1.0 실측값 추출 → θ (임계값)으로 고정
+
+Step 2 — 제약 적용 (Top-K Full 재평가 후)
+  survived = { subset : camouflage(subset) ≤ θ }
+
+Step 3 — 최종 선택
+  best = argmax full_sil  over survived
+  (survived 가 공집합이면 제약 완화 → 전체 Top-K 대상 argmax로 fallback)
+```
+
+#### 수식
+
+```
+θ = Camouflage@1.0( UMAP_full( X[netflowgap_features] ) )
+
+best_features = argmax  Silhouette(UMAP_full(X[S]))
+                S ∈ TopK
+                subject to  Camouflage@1.0(UMAP_full(X[S])) ≤ θ
+```
+
+#### 논문 방어 논리
+
+> *"We select the feature subset that maximizes UMAP Silhouette Score among candidates
+> whose camouflage rate does not exceed that of the NetFlowGap baseline, ensuring
+> that boundary-level attack concealment is at least as well-controlled as the
+> domain-expert-defined reference."*
+
+- **임계값 근거**: 데이터에서 튜닝한 값이 아니라 **기존 논문(netflowgap)의 실측값** 이므로 리뷰어의 "threshold를 왜 이 값으로 정했는가?" 질문에 객관적 근거 제시 가능
+- **주 목적 함수 유지**: Primary objective 는 여전히 Silhouette → CASS의 핵심 기여인 "UMAP 클러스터 구조 기반 선택"이 훼손되지 않음
+- **단방향 안전망**: Silhouette ↔ Camouflage 간 트레이드오프가 발생할 때, Camouflage가 netflowgap보다 나쁜 조합만 제거
+
+---
+
 ### Elbow 검출 알고리즘
 
 `search_algo.py`의 `find_elbow()` 함수입니다. Fast Silhouette 점수의 내림차순 정렬 후 다음 조건으로 Elbow K를 결정합니다.
@@ -445,13 +497,15 @@ Uniform Distribution Based Balancing (Abdulhammed et al., 2019):
 | Infection | 20,000 | 17% |
 | Installation | 20,000 | 17% |
 
-### 2단계 스크리닝 & Elbow 검출
+### 2단계 스크리닝 & Elbow 검출 & 제약 기반 선택
 
 UMAP 연산 비용 절감을 위해 2단계 구조를 사용합니다.
 
-1. **1단계 (Fast)**: 전체 후보 조합을 빠르게 평가
-2. **Elbow 검출**: 내림차순 fast_sil에서 gap < `max_gap × ELBOW_GAP_RATIO` 인 지점 → 상위 K 결정
-3. **2단계 (Full)**: 상위 K개에 대해서만 논문 파라미터로 재평가
+1. **Reference 기준값**: netflowgap 피처로 Full UMAP 실행 → Camouflage@1.0 임계값 θ 확정
+2. **1단계 (Fast)**: 전체 후보 조합을 빠르게 평가 (Silhouette만)
+3. **Elbow 검출**: 내림차순 fast_sil에서 gap < `max_gap × ELBOW_GAP_RATIO` 인 지점 → 상위 K 결정
+4. **2단계 (Full)**: 상위 K개에 대해서만 논문 파라미터로 재평가 → Silhouette + Boundary_Mean + Camouflage 동시 계산 (동일 임베딩 재사용)
+5. **제약 기반 선택**: `camouflage ≤ θ` 를 만족하는 후보 중 Silhouette 최댓값 선택
 
 ### Train / Test 분리
 
@@ -482,6 +536,12 @@ UMAP이 훈련 데이터만 보므로 **test leakage 없음**.
 |---------|-------|------|
 | `PILOT_N` | 20 | Pilot 검증 서브셋 수 |
 | `PILOT_MIN_SPEARMAN` | 0.7 | 통과 기준 Spearman r |
+
+**`PILOT_MIN_SPEARMAN = 0.7` 근거**
+
+Cohen (1988)의 효과 크기 분류에서 Spearman r ≥ 0.7은 "strong correlation"으로 정의됩니다. 결정계수로 환산하면 R² ≥ 0.49, 즉 Fast Silhouette이 Full Silhouette 분산의 49% 이상을 설명합니다. Top-K 스크리닝의 목적은 완벽한 값 예측이 아니라 상위 후보 식별이므로, 분산의 절반 이상을 설명하는 수준이면 proxy로 충분하다고 판단했습니다.
+
+r < 0.7이면 `--pilot` 플래그 실행 시 `n_neighbors`를 30씩 최대 3회 자동 증가하여 재검증합니다 (`pilot_validation_with_retry`). 최대 재시도 후에도 통과하지 못하면 경고와 함께 진행합니다.
 
 ### 비교군 설정
 
@@ -551,3 +611,4 @@ cuML 설치: [https://docs.rapids.ai/install](https://docs.rapids.ai/install)
 - I-SiamIDS (2021), J.BigData (2021) — 3:1 클래스 균형 비율 근거
 - McInnes et al. (2018) — UMAP 원논문
 - CICIDS2018 — Canadian Institute for Cybersecurity
+- Cohen, J. (1988). *Statistical Power Analysis for the Behavioral Sciences* (2nd ed.). — `PILOT_MIN_SPEARMAN = 0.7` (strong correlation, R² ≥ 0.49) 기준
