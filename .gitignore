@@ -1,6 +1,6 @@
 # ── 데이터 파일 ──────────────────────────────────────────────────
-data/raw/
-data/processed/
+# data/raw/
+# data/processed/
 *.parquet
 *.feather
 *.h5
