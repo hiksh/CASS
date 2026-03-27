@@ -51,7 +51,31 @@ training-flow.csv
 [5] 시각화 & 저장
     UMAP 산점도 (Benign vs Attack / Kill Chain)
     2단계 스크리닝 비교 플롯  |  Pilot 산점도
+        │
+        ▼
+[선택] Export  (--export)
+    비교군별 train/test CSV 생성 (ML 교차 비교용)
+    training-flow.csv → train_*.csv  |  test-flow.csv → test_*.csv
 ```
+
+---
+
+## 논문 증명 전략 (Validation Strategy)
+
+UMAP 기반 선택이 model-agnostic하게 유효하다는 것을 증명하기 위해, 동일한 피처 수 N을 고정한 채 선택 방법만 다른 **5개 비교군**을 생성합니다.
+
+| 비교군 | 선택 기준 | 피처 수 | 편향 |
+|--------|-----------|---------|------|
+| `cass` | UMAP Silhouette 최적화 | N (자동) | 없음 ← **제안 방법** |
+| `anova` | ANOVA F-score 상위 N개 | N | 선형 분리도 가정 |
+| `extratrees` | ExtraTrees 중요도 상위 N개 | N | 트리 구조 편향 |
+| `random` | 무작위 N개 | N | — (하한 기준선) |
+| `lit_netflowgap` | NetFlowGap 논문 수동 선정 | 27 (고정) | 도메인 전문가 편향 |
+
+> **핵심**: N을 고정하면 피처 수 차이에 의한 confounding을 제거하고,
+> 순수하게 **선택 방법**의 차이만 비교할 수 있습니다.
+
+각 비교군의 train/test CSV를 ML 모델(XGBoost, RF, LSTM, CNN 등)에 그대로 입력하여 F1·Accuracy·Recall 등을 비교합니다.
 
 ---
 
@@ -61,7 +85,8 @@ training-flow.csv
 CASS/
 ├── data/
 │   ├── raw/
-│   │   └── training-flow.csv          # CICIDS2018 원본 (76 피처 + 레이블)
+│   │   ├── training-flow.csv          # CICIDS2018 훈련 원본 (76 피처 + 레이블)
+│   │   └── test-flow.csv              # CICIDS2018 테스트 원본 (완전 분리 보관)
 │   └── processed/
 │       └── cicids2018_processed.csv   # 전처리 완료 데이터 (자동 생성)
 ├── src/
@@ -70,13 +95,15 @@ CASS/
 │   ├── data_loader.py     # 로드 + UDBB 샘플링 + 전처리 파이프라인
 │   ├── pre_filter.py      # ExtraTrees + ANOVA 평균순위 기반 사전 필터링
 │   ├── evaluator.py       # UMAP 차원 축소 + Silhouette Score 계산 (cuML GPU)
-│   └── search_algo.py     # 2단계 스크리닝 (Greedy/Random + Elbow + Full 재평가)
+│   ├── search_algo.py     # 2단계 스크리닝 (Greedy/Random + Elbow + Full 재평가)
+│   └── exporter.py        # 비교군별 train/test CSV 생성
 ├── notebooks/
 │   ├── 01_eda_and_preprocessing.ipynb   # 클래스 분포, 피처 분포, 전처리 결과 EDA
 │   └── 02_silhouette_analysis.ipynb     # 탐색 결과 분석, 최적 부분집합 시각화
 ├── results/
 │   ├── figures/           # UMAP 시각화, 스크리닝 비교 플롯 저장
-│   └── logs/              # pre_filter_ranking.csv, search_results_*.csv 저장
+│   ├── logs/              # pre_filter_ranking.csv, search_results_*.csv 저장
+│   └── exports/           # 비교군별 train/test CSV (ML 교차 비교용)
 ├── main.py                # 전체 파이프라인 실행 진입점 (CLI)
 └── requirements.txt
 ```
@@ -105,6 +132,14 @@ Uniform Distribution Based Balancing (Abdulhammed et al., 2019):
 | Action (C2) | 20,000 |
 | Infection | 20,000 |
 | Installation | 20,000 |
+
+### Train / Test 분리 전략
+
+- **Train**: `training-flow.csv` → UDBB 샘플링 → UMAP feature selection → 비교군 export
+- **Test**: `test-flow.csv` (완전 분리) → 훈련 데이터 fit된 동일 scaler로만 변환 → export
+
+UMAP은 훈련 데이터만 보므로 test leakage가 발생하지 않습니다.
+ML 학습·평가는 export된 원본 feature space CSV를 사용합니다 (UMAP 임베딩이 아님).
 
 ### 2단계 스크리닝 & Elbow 검출
 
@@ -136,7 +171,8 @@ pip install -r requirements.txt
 ### 데이터 준비
 
 ```
-CASS/data/raw/training-flow.csv   # CICIDS2018 (76 피처 + attack_flag + attack_step)
+CASS/data/raw/training-flow.csv   # CICIDS2018 훈련 (76 피처 + attack_flag + attack_step)
+CASS/data/raw/test-flow.csv       # CICIDS2018 테스트 (동일 컬럼 구조)
 ```
 
 `attack_step` 컬럼 값: `benign`, `action`, `infection`, `installation`
@@ -147,17 +183,20 @@ CASS/data/raw/training-flow.csv   # CICIDS2018 (76 피처 + attack_flag + attack
 # 기본 실행 (greedy, top-20)
 python main.py
 
-# random 탐색, 100개 서브셋
-python main.py --mode random --n-subsets 100
-
 # Pilot 검증 포함
 python main.py --pilot
+
+# random 탐색, 100개 서브셋
+python main.py --mode random --n-subsets 100
 
 # 상위 15개 피처 후보 사용
 python main.py --top-k 15
 
+# 비교군 CSV export (ML 교차 비교용)
+python main.py --export
+
 # 전체 옵션
-python main.py --mode random --n-subsets 100 --top-k 15 --pilot
+python main.py --mode random --n-subsets 100 --top-k 15 --pilot --export
 ```
 
 ### 출력 결과
@@ -165,14 +204,25 @@ python main.py --mode random --n-subsets 100 --top-k 15 --pilot
 ```
 results/
 ├── figures/
-│   ├── umap_best_subset.png          # 최적 부분집합 UMAP 시각화
-│   ├── two_phase_screening.png       # Fast vs Full Silhouette 비교
-│   ├── pilot_fast_vs_full.png        # (--pilot) Pilot 검증 산점도
+│   ├── umap_best_subset.png             # 최적 부분집합 UMAP 시각화
+│   ├── two_phase_screening.png          # Fast vs Full Silhouette 비교
+│   ├── pilot_fast_vs_full.png           # (--pilot) Pilot 검증 산점도
 │   └── best_subset_umap_embeddings.csv  # UMAP 임베딩 좌표
-└── logs/
-    ├── pre_filter_ranking.csv        # 사전 필터링 순위표
-    ├── search_results_greedy.csv     # Greedy 탐색 결과
-    └── search_results_random.csv     # Random 탐색 결과
+├── logs/
+│   ├── pre_filter_ranking.csv           # 사전 필터링 순위표
+│   ├── search_results_greedy.csv        # Greedy 탐색 결과
+│   └── search_results_random.csv        # Random 탐색 결과
+└── exports/                             # (--export)
+    ├── train_cass.csv                   # CASS 최적 피처
+    ├── test_cass.csv
+    ├── train_anova.csv                  # ANOVA 상위 N개
+    ├── test_anova.csv
+    ├── train_extratrees.csv             # ExtraTrees 상위 N개
+    ├── test_extratrees.csv
+    ├── train_random.csv                 # 무작위 N개
+    ├── test_random.csv
+    ├── train_lit_netflowgap.csv         # NetFlowGap 논문 27개
+    └── test_lit_netflowgap.csv
 ```
 
 ---
@@ -190,6 +240,21 @@ results/
 | `ELBOW_MIN_K` | 3 | 2단계 재평가 최소 K |
 | `PILOT_N` | 20 | Pilot 검증 서브셋 수 |
 | `PILOT_MIN_SPEARMAN` | 0.7 | Pilot 통과 기준 Spearman r |
+| `N_RANDOM_BASELINE` | 1 | Export 랜덤 비교군 반복 횟수 |
+| `LITERATURE_BASELINES` | `{"netflowgap": [...]}` | 논문 기준 피처 조합 (수정 용이) |
+
+### Literature Baseline 추가 방법
+
+`config.py`의 `LITERATURE_BASELINES` dict에 항목을 추가하면 됩니다:
+
+```python
+LITERATURE_BASELINES = {
+    "netflowgap": ["flow duration", "syn flag cnt", ...],  # 현재
+    "cicids2018_paper": ["feature_a", "feature_b", ...],   # 추가 예시
+}
+```
+
+자동으로 `train_lit_cicids2018_paper.csv` / `test_lit_cicids2018_paper.csv`가 생성됩니다.
 
 ---
 
@@ -208,8 +273,7 @@ results/
 
 ## Future Work
 
-현재 구현은 UMAP Silhouette Score를 단일 지표로 피처 부분집합을 평가합니다.
-이하의 확장은 **논문 후속 작업**으로 예정되어 있습니다.
+현재 구현은 UMAP Silhouette Score를 단일 지표로 피처 부분집합을 평가하며, 비교군 CSV를 생성하는 것까지 포함합니다. 이하의 확장은 **논문 후속 작업**으로 예정되어 있습니다.
 
 ### 1. 다차원 UMAP 메트릭 분석 (`analyzer.py`)
 
@@ -226,22 +290,11 @@ results/
 **목적**: UMAP 기반 피처 선택이 실제 ML 탐지 성능과 양의 상관관계를 갖는다는 것을 수치로 증명
 
 **방법**:
-- 선택된 피처 조합별로 8개 UMAP 메트릭 + 5개 이상 ML 모델(XGBoost, RF, LSTM, CNN, etc.)의 F1/Precision/Recall/Accuracy 수집
+- 비교군별 8개 UMAP 메트릭 + 5개 이상 ML 모델(XGBoost, RF, LSTM, CNN, etc.)의 F1/Precision/Recall/Accuracy 수집
 - 피어슨 상관계수 히트맵으로 각 UMAP 지표 ↔ ML 성능 지표 간 관계 시각화
 - **가설 검증**: Silhouette Score가 높은 피처 조합 → 대부분의 ML 모델에서 높은 탐지율 → UMAP 기반 선택의 모델 비종속성 증명
 
-### 3. 비교 기준선 (Comparison Baseline)
-
-CASS의 우위를 정량적으로 보여주기 위한 비교:
-
-| 방법 | 선택 기준 | 편향 |
-|------|-----------|------|
-| **CASS** (제안) | UMAP Silhouette | 없음 (model-agnostic) |
-| RF Importance | 특정 RF 모델의 feature importance | RF에 편향 |
-| ANOVA F-score | 선형 분리도 가정 | 선형 모델에 편향 |
-| 모델별 래퍼 | 특정 모델 성능 최적화 | 해당 모델에 편향 |
-
-### 4. 다중 데이터셋 일반화 검증
+### 3. 다중 데이터셋 일반화 검증
 
 현재 CICIDS2018만 지원. 향후 아래 데이터셋으로 확장하여 일반화 검증:
 
@@ -249,8 +302,6 @@ CASS의 우위를 정량적으로 보여주기 위한 비교:
 - **UNSW-NB15** — 다양한 공격 유형
 - **CICIoT2023** — 최신 IoT 공격 패턴
 - **TON-IoT** — IoT/IIoT 다중 환경
-
-각 데이터셋에서 CASS로 선택한 피처 조합이 다수 ML 모델에서 일관된 성능을 보이는지 검증.
 
 ---
 

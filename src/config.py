@@ -12,6 +12,7 @@ PROCESSED_DIR = DATA_DIR / "processed"
 RESULTS_DIR   = BASE_DIR / "results"
 FIGURES_DIR   = RESULTS_DIR / "figures"
 LOGS_DIR      = RESULTS_DIR / "logs"
+EXPORTS_DIR   = RESULTS_DIR / "exports"
 
 TRAIN_FILE = RAW_DIR / "training-flow.csv"
 TEST_FILE  = RAW_DIR / "test-flow.csv"
@@ -95,3 +96,25 @@ MIN_SUBSET_SIZE  = 3
 MAX_SUBSET_SIZE  = 15
 
 RANDOM_SEED = 42
+
+# ── Export 비교군 설정 ────────────────────────────────────────────────────────
+# Random 비교군 반복 횟수 (1이면 "random", 2이상이면 "random_1", "random_2" ...)
+N_RANDOM_BASELINE = 1
+
+# Literature 기준 피처 조합 — 논문별로 추가/수정 가능
+LITERATURE_BASELINES = {
+    "netflowgap": [
+        "flow duration",    "tot fwd pkts",     "tot bwd pkts",
+        "totlen fwd pkts",  "totlen bwd pkts",
+        "fwd pkt len max",  "fwd pkt len mean",  "fwd pkt len std",
+        "bwd pkt len max",  "bwd pkt len mean",  "pkt len mean",
+        "flow byts/s",      "flow pkts/s",       "fwd pkts/s",
+        "flow iat mean",    "flow iat std",      "flow iat max",
+        "fwd iat tot",      "fwd iat mean",
+        "syn flag cnt",     "ack flag cnt",      "psh flag cnt",  "fin flag cnt",
+        "init fwd win byts","init bwd win byts",
+        "active mean",      "idle mean",
+    ],
+    # 새 논문 기준 추가 예시:
+    # "cicids2018_paper": ["feature_a", "feature_b", ...],
+}
