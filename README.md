@@ -229,6 +229,200 @@ results/
 
 ---
 
+## 알고리즘 상세 (Algorithm Details)
+
+### 전처리 파이프라인
+
+`data_loader.py`의 `preprocess()` 함수가 실행하는 6단계 파이프라인입니다.
+
+```
+① Inf / NaN → 열별 중앙값(median) 대체
+   (inf, -inf, -1 모두 NaN 처리 후 열별 median으로 imputation)
+
+② Percentile Clipping (이상치 제거)
+   - log 변환 대상 피처 (skewed): clip(lower=0, upper=0.99분위)
+   - 나머지 피처:                  clip(lower=0.01분위, upper=0.99분위)
+
+③ log1p 변환 (log 피처만 적용)
+   X[col] = log(1 + X[col])   — 0-safe, 음수 불가
+
+④ RobustScaler 정규화
+   X_scaled = (X - median) / IQR   (중앙값 기준, 이상치 내성)
+```
+
+**log1p 적용 피처 목록 (13개, `LOG_FEATURES`):**
+
+| flow duration | totlen fwd/bwd pkts | flow byts/s | flow pkts/s |
+| fwd pkts/s | fwd iat tot | fwd iat mean | flow iat mean/std/max |
+| active mean | idle mean | tot fwd/bwd pkts | fwd/bwd pkt len max |
+| init fwd/bwd win byts | | | |
+
+---
+
+### Pre-filter 결합 공식
+
+ExtraTrees 중요도 순위 `r_tree(f)` 와 ANOVA F-점수 순위 `r_anova(f)` 를 단순 평균 순위로 결합합니다.
+
+```
+avg_rank(f) = ( r_tree(f) + r_anova(f) ) / 2
+
+  r_*(f) : 해당 지표 내림차순 정렬 시 피처 f의 0-based 순위
+           (중요도·F-score가 가장 높은 피처 = 0)
+
+상위 K = TOP_K_PREFILTER(기본 20)개를 avg_rank 오름차순으로 선발
+```
+
+두 방법을 동등하게 결합하여 트리 구조 편향(ExtraTrees)과 선형 분리도 가정(ANOVA)을 상호 보완합니다.
+
+---
+
+### Elbow 검출 알고리즘
+
+`search_algo.py`의 `find_elbow()` 함수입니다. Fast Silhouette 점수의 내림차순 정렬 후 다음 조건으로 Elbow K를 결정합니다.
+
+```
+scores_desc = [s_1 ≥ s_2 ≥ ... ≥ s_n]  (Fast Silhouette 내림차순)
+
+gaps[i] = |s_i - s_{i+1}|               (인접 점수 차이, i = 1..n-1)
+max_gap  = max(gaps)
+threshold = max_gap × ELBOW_GAP_RATIO   (기본 0.1)
+
+K = 첫 번째 i where gaps[i] < threshold  (0-based: K = i+1)
+K = max(K, ELBOW_MIN_K)                 (최소 3 보장)
+K = n  if 조건 미발생                   (모두 Full 재평가)
+```
+
+**직관:** 점수가 급격히 떨어지기 시작하는 "절벽" 직전 지점을 Elbow로 보고, 그 위의 서브셋만 Full UMAP으로 재평가합니다.
+
+---
+
+### Silhouette Score 서브샘플링
+
+Silhouette는 O(n²) 연산이므로, 10,000개 초과 시 무작위 서브샘플로 근사합니다.
+
+```python
+# evaluator.py / analyzer.py 공통 적용
+if n > 10_000:
+    idx = rng.choice(n, 10_000, replace=False)
+    sil = silhouette_score(emb[idx], y[idx], metric="euclidean")
+```
+
+---
+
+### 비교군 구성 로직 (`exporter.py`)
+
+N = `len(best_features)` 로 모든 비교군의 피처 수를 동일하게 고정합니다.
+
+| 비교군 | 선택 방법 | 소스 풀 |
+|--------|-----------|---------|
+| `cass` | UMAP Silhouette 최적화 결과 | — |
+| `anova` | `filter_summary`를 ANOVA_F 내림차순 재정렬 → 상위 N개 | Pre-filter 풀 (K개) |
+| `extratrees` | `filter_summary`를 Tree_Importance 내림차순 재정렬 → 상위 N개 | Pre-filter 풀 (K개) |
+| `random` | `random.sample(candidate_pool, N)` — seed=RANDOM_SEED+1000 | Pre-filter 풀 (K개) |
+| `lit_<name>` | `LITERATURE_BASELINES[name]` 수동 정의 (데이터셋 내 존재하는 것만) | 전체 피처 |
+
+> **중요:** anova / extratrees 비교군은 **Pre-filter 후보 풀(K개) 내에서** 재정렬하여 선택합니다. 전체 27개 피처 중 상위 N개가 아닙니다. 동일한 후보 풀 안에서 선택 기준만 달리하여 순수 비교를 보장합니다.
+
+---
+
+### 8개 수치 지표 계산 공식
+
+`analyzer.py`의 `_compute_metrics(emb, y)` — UMAP 2D 임베딩에서 계산합니다.
+
+#### [Separability 그룹]
+
+**① Silhouette Score**
+```
+s(i) = (b(i) - a(i)) / max(a(i), b(i))
+
+  a(i) : 포인트 i와 동일 클래스 내 나머지 포인트들의 평균 유클리드 거리
+  b(i) : 포인트 i와 반대 클래스 포인트들의 평균 유클리드 거리
+
+Silhouette = mean( s(i) for all i )   ∈ [-1, 1]
+```
+
+**② Centroid_to_Benign**
+```
+c_B = mean(emb[y == 0], axis=0)   # benign 무게중심
+c_A = mean(emb[y == 1], axis=0)   # attack 무게중심
+
+Centroid_to_Benign = ||c_A - c_B||_2
+```
+두 클래스 무게중심 간 유클리드 거리. 클러스터가 멀리 분리될수록 큰 값.
+
+**③ Global_Mean_Dist**
+```
+A_sub ⊆ attack_pts  (최대 5,000개 서브샘플)
+B_sub ⊆ benign_pts  (최대 5,000개 서브샘플)
+
+Global_Mean_Dist = mean( ||a - b||_2  for all a ∈ A_sub, b ∈ B_sub )
+```
+공격-정상 간 쌍별(pairwise) 거리의 전체 평균. 메모리 제어를 위해 서브샘플.
+
+---
+
+#### [Camouflage 그룹]
+
+**④ Boundary_Mean**
+```
+NearestNeighbors(n_neighbors=1).fit(benign_pts)
+nn_dists[i] = min( ||attack_pts[i] - b||_2  for b ∈ benign_pts )
+
+Boundary_Mean = mean(nn_dists)
+```
+각 공격 포인트에서 가장 가까운 정상 포인트까지의 거리 평균. 클수록 공격이 정상 영역에서 멀리 분리됨.
+
+**⑤ Camouflage@t**
+```
+Camouflage@t = mean( nn_dists[i] ≤ t )   (비율, 0~1)
+```
+benign 근방 반경 t 이내에 위치한 공격 포인트 비율. 작을수록 위장 공격이 적음.
+기본값: t = 1.0 (`CAMOUFLAGE_THRESHOLDS = [1.0]`).
+
+---
+
+#### [Cluster 그룹]
+
+공격 포인트만 대상으로 `HDBSCAN(min_cluster_size=50, min_samples=10)` 실행.
+
+**⑥ HDBSCAN_Noise_Rate**
+```
+labels = HDBSCAN.fit_predict(attack_pts)
+HDBSCAN_Noise_Rate = mean( labels == -1 )
+```
+어느 클러스터에도 할당되지 않은 noise 공격 포인트 비율. 작을수록 공격이 응집되어 있음.
+
+**⑦ Cluster_Count**
+```
+Cluster_Count = len( unique(labels[labels != -1]) )
+```
+발견된 유효 공격 클러스터 수. 작을수록 공격 패턴이 단일한 덩어리로 응집.
+
+**⑧ Cohesion_Dist**
+```
+For each cluster c:
+  centroid_c = mean(attack_pts[labels == c], axis=0)
+  intra_c = sum( ||p - centroid_c||_2  for p in attack_pts[labels == c] )
+
+Cohesion_Dist = sum(intra_c for all c) / n_valid_attack_pts
+```
+클러스터 내 포인트들의 무게중심 기준 평균 거리(분산 거리). 작을수록 클러스터가 조밀.
+
+---
+
+### 히트맵 정규화 방식
+
+```
+raw_val → norm = (raw - col_min) / (col_max - col_min)   # 0~1
+
+higher_better = True  → 히트맵 값 = norm         (큰 raw가 진한 초록)
+higher_better = False → 히트맵 값 = 1 - norm      (작은 raw가 진한 초록)
+```
+
+모든 열에서 1.0(진한 초록) = best 방향으로 통일. 셀 annotation은 정규화 전 실제 값 표시.
+
+---
+
 ## 핵심 설계 결정 (Key Design Decisions)
 
 ### UMAP 파라미터 (NetFlowGap 기준)
