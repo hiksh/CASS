@@ -310,7 +310,7 @@ def compute_reference_camouflage(
         f"\n[Reference] umar2024 Camouflage@{t} 기준값 계산 중 "
         f"({len(ref_features)}개 피처) ..."
     )
-    _, _, cam, _ = evaluate_subset_full_metrics(
+    _, _, cam, emb = evaluate_subset_full_metrics(
         X_scaled, y, all_feature_names, ref_features
     )
     cam_val = cam.get(t, list(cam.values())[0])
