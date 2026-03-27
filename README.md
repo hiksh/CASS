@@ -42,7 +42,7 @@ data/raw/training-flow.csv
          │
          ▼
 [Stage 2.7] Reference Camouflage 기준값 계산
-            netflowgap 피처 조합으로 Full UMAP 실행
+            umar2024 피처 조합으로 Full UMAP 실행
             → Camouflage@1.0 실측값 추출 → 제약 임계값(θ)으로 저장
          │
          ▼
@@ -58,7 +58,7 @@ data/raw/training-flow.csv
                     (동일 임베딩 재사용 — k-NN 1회 추가)
                     │
                     └─ 제약 기반 최종 선택
-                         camouflage ≤ θ(netflowgap) 를 만족하는 후보 중
+                         camouflage ≤ θ(umar2024) 를 만족하는 후보 중
                          full_sil 최댓값 → best_features 확정
          │
          ▼
@@ -91,7 +91,7 @@ data/raw/training-flow.csv
 | `anova` | ANOVA F-score 상위 N개 | N | 선형 분리도 가정 |
 | `extratrees` | ExtraTrees 중요도 상위 N개 | N | 트리 구조 편향 |
 | `random` | 무작위 N개 | N | — (하한 기준선) |
-| `lit_netflowgap` | NetFlowGap 논문 수동 선정 | 27 (고정) | 도메인 전문가 편향 |
+| `lit_umar2024` | Umar et al. (2024) 논문 수동 선정 | 12 (고정) | 도메인 전문가 편향 |
 
 모든 비교군은 동일한 pre-filter 후보 풀(K개)에서 선택됩니다.
 
@@ -234,7 +234,7 @@ results/
     ├── train_anova.csv / test_anova.csv             # ANOVA 상위 N개
     ├── train_extratrees.csv / test_extratrees.csv   # ExtraTrees 상위 N개
     ├── train_random.csv / test_random.csv           # 무작위 N개
-    └── train_lit_netflowgap.csv / test_lit_netflowgap.csv  # NetFlowGap 27개
+    └── train_lit_umar2024.csv / test_lit_umar2024.csv  # umar2024 12개
 ```
 
 ---
@@ -243,7 +243,7 @@ results/
 
 ### 전처리 파이프라인
 
-`data_loader.py`의 `preprocess()` 함수가 실행하는 6단계 파이프라인입니다.
+`data_loader.py`의 `preprocess()` 함수가 실행하는 4단계 파이프라인입니다.
 
 ```
 ① Inf / NaN → 열별 중앙값(median) 대체
@@ -260,12 +260,18 @@ results/
    X_scaled = (X - median) / IQR   (중앙값 기준, 이상치 내성)
 ```
 
-**log1p 적용 피처 목록 (13개, `LOG_FEATURES`):**
+**log1p 적용 피처 목록 (49개, `LOG_FEATURES`):**
 
-| flow duration | totlen fwd/bwd pkts | flow byts/s | flow pkts/s |
-| fwd pkts/s | fwd iat tot | fwd iat mean | flow iat mean/std/max |
-| active mean | idle mean | tot fwd/bwd pkts | fwd/bwd pkt len max |
-| init fwd/bwd win byts | | | |
+| 그룹 | 피처 |
+|------|------|
+| 패킷 수/바이트 | tot fwd/bwd pkts · totlen fwd/bwd pkts |
+| 패킷 길이 | fwd pkt len max/min/mean/std · bwd pkt len max/min/mean/std |
+| | pkt len min/max/mean/std/var · pkt size avg · fwd/bwd seg size avg |
+| 처리율 | flow byts/s · flow pkts/s · fwd/bwd pkts/s |
+| IAT | flow iat mean/std/max · fwd iat tot/mean/std/max · bwd iat tot/mean/std/max |
+| 헤더/윈도우 | fwd/bwd header len · init fwd/bwd win byts |
+| 서브플로우 | subflow fwd/bwd pkts · subflow fwd/bwd byts |
+| Active/Idle | active mean/std/max · idle mean/std/max |
 
 ---
 
@@ -288,13 +294,13 @@ avg_rank(f) = ( r_tree(f) + r_anova(f) ) / 2
 
 ### 제약 기반 최적 서브셋 선택 (Constraint-based Selection)
 
-CASS의 핵심 기여는 **"UMAP 클러스터 분리도가 높은 피처 조합이 ML 탐지 성능도 높다"** 는 주장입니다. 그런데 Silhouette Score만 최적화하면 경계면 근방의 **위장 공격(Camouflage)** 이 묵인될 수 있습니다. 이를 방지하기 위해 netflowgap 실측값을 **외부 안전 기준선** 으로 사용합니다.
+CASS의 핵심 기여는 **"UMAP 클러스터 분리도가 높은 피처 조합이 ML 탐지 성능도 높다"** 는 주장입니다. 그런데 Silhouette Score만 최적화하면 경계면 근방의 **위장 공격(Camouflage)** 이 묵인될 수 있습니다. 이를 방지하기 위해 umar2024 실측값을 **외부 안전 기준선** 으로 사용합니다.
 
 #### 선택 절차
 
 ```
 Step 1 — Reference 기준값 계산
-  netflowgap 피처 27개로 Full UMAP 실행
+  umar2024 피처 12개로 Full UMAP 실행
   → Camouflage@1.0 실측값 추출 → θ (임계값)으로 고정
 
 Step 2 — 제약 적용 (Top-K Full 재평가 후)
@@ -308,7 +314,7 @@ Step 3 — 최종 선택
 #### 수식
 
 ```
-θ = Camouflage@1.0( UMAP_full( X[netflowgap_features] ) )
+θ = Camouflage@1.0( UMAP_full( X[umar2024_features] ) )
 
 best_features = argmax  Silhouette(UMAP_full(X[S]))
                 S ∈ TopK
@@ -318,13 +324,13 @@ best_features = argmax  Silhouette(UMAP_full(X[S]))
 #### 논문 방어 논리
 
 > *"We select the feature subset that maximizes UMAP Silhouette Score among candidates
-> whose camouflage rate does not exceed that of the NetFlowGap baseline, ensuring
+> whose camouflage rate does not exceed that of the Umar et al. (2024) baseline, ensuring
 > that boundary-level attack concealment is at least as well-controlled as the
 > domain-expert-defined reference."*
 
-- **임계값 근거**: 데이터에서 튜닝한 값이 아니라 **기존 논문(netflowgap)의 실측값** 이므로 리뷰어의 "threshold를 왜 이 값으로 정했는가?" 질문에 객관적 근거 제시 가능
+- **임계값 근거**: 데이터에서 튜닝한 값이 아니라 **기존 논문(umar2024)의 실측값** 이므로 리뷰어의 "threshold를 왜 이 값으로 정했는가?" 질문에 객관적 근거 제시 가능
 - **주 목적 함수 유지**: Primary objective 는 여전히 Silhouette → CASS의 핵심 기여인 "UMAP 클러스터 구조 기반 선택"이 훼손되지 않음
-- **단방향 안전망**: Silhouette ↔ Camouflage 간 트레이드오프가 발생할 때, Camouflage가 netflowgap보다 나쁜 조합만 제거
+- **단방향 안전망**: Silhouette ↔ Camouflage 간 트레이드오프가 발생할 때, Camouflage가 umar2024보다 나쁜 조합만 제거
 
 ---
 
@@ -501,7 +507,7 @@ Uniform Distribution Based Balancing (Abdulhammed et al., 2019):
 
 UMAP 연산 비용 절감을 위해 2단계 구조를 사용합니다.
 
-1. **Reference 기준값**: netflowgap 피처로 Full UMAP 실행 → Camouflage@1.0 임계값 θ 확정
+1. **Reference 기준값**: umar2024 피처로 Full UMAP 실행 → Camouflage@1.0 임계값 θ 확정
 2. **1단계 (Fast)**: 전체 후보 조합을 빠르게 평가 (Silhouette만)
 3. **Elbow 검출**: 내림차순 fast_sil에서 gap < `max_gap × ELBOW_GAP_RATIO` 인 지점 → 상위 K 결정
 4. **2단계 (Full)**: 상위 K개에 대해서만 논문 파라미터로 재평가 → Silhouette + Boundary_Mean + Camouflage 동시 계산 (동일 임베딩 재사용)
@@ -554,7 +560,7 @@ r < 0.7이면 `--pilot` 플래그 실행 시 `n_neighbors`를 30씩 최대 3회 
 
 ```python
 LITERATURE_BASELINES = {
-    "netflowgap":      ["flow duration", "syn flag cnt", ...],
+    "umar2024":         ["tot fwd pkts", "bwd pkt len max", ...],
     "cicids2018_paper": ["feature_a", "feature_b", ...],  # 추가
 }
 ```
@@ -607,6 +613,7 @@ cuML 설치: [https://docs.rapids.ai/install](https://docs.rapids.ai/install)
 ## 참고 문헌 (References)
 
 - **NetFlowGap** — UMAP 파라미터 및 UDBB 샘플링 기준
+- Umar et al. (2024) "Effects of feature selection and normalization on network intrusion detection" — Literature baseline (umar2024, 12개 피처)
 - Abdulhammed et al. (2019) — UDBB 샘플링 전략
 - I-SiamIDS (2021), J.BigData (2021) — 3:1 클래스 균형 비율 근거
 - McInnes et al. (2018) — UMAP 원논문
