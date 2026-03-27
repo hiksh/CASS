@@ -97,6 +97,12 @@ MAX_SUBSET_SIZE  = 15
 
 RANDOM_SEED = 42
 
+# ── Analyzer (UMAP 수치 분석) ─────────────────────────────────────────────────
+HDBSCAN_MIN_CLUSTER_SIZE = 50   # HDBSCAN 최소 클러스터 크기
+HDBSCAN_MIN_SAMPLES      = 10   # HDBSCAN core point 최소 이웃 수
+CAMOUFLAGE_THRESHOLDS    = [1.0] # Camouflage@K 임계값 목록 (필요 시 [0.5, 1.0, 2.0] 등)
+MAX_CDIST_SAMPLE         = 5_000 # Global_Mean_Dist 서브샘플 상한 (메모리/속도 제어)
+
 # ── Export 비교군 설정 ────────────────────────────────────────────────────────
 # Random 비교군 반복 횟수 (1이면 "random", 2이상이면 "random_1", "random_2" ...)
 N_RANDOM_BASELINE = 1

@@ -29,7 +29,7 @@ from .data_loader import load_and_sample, preprocess
 
 # ── 비교군 구성 ───────────────────────────────────────────────────────────────
 
-def _build_groups(
+def build_comparison_groups(
     best_features: list,
     filter_summary: pd.DataFrame,
     feature_names: list,
@@ -186,7 +186,7 @@ def export_comparison_sets(
 
     # ── 비교군 구성 ──────────────────────────────────────────────────────────
     print("\n  [1/3] 비교군 피처 리스트 생성 ...")
-    groups = _build_groups(best_features, filter_summary, feature_names, n_random)
+    groups = build_comparison_groups(best_features, filter_summary, feature_names, n_random)
 
     # 비교군 요약 출력
     print(f"\n  {'그룹':<20} {'피처 수':>6}  {'상위 4개 피처 (미리보기)'}")

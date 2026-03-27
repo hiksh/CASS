@@ -9,6 +9,8 @@ Cluster-Aware Feature Selection System 전체 파이프라인 실행기.
   python main.py --mode random --n-subsets 100 --pilot
   python main.py --top-k 15
   python main.py --export                    # 비교군 CSV 내보내기
+  python main.py --analyze                   # 8지표 히트맵 분석
+  python main.py --export --analyze          # 전체 실행
 """
 import argparse
 import numpy as np
@@ -26,7 +28,9 @@ from src.config import (
 from src.data_loader import load_dataset
 from src.pre_filter import pre_filter
 from src.search_algo import search, pilot_validation
-from src.exporter import export_comparison_sets
+from src.exporter import export_comparison_sets, build_comparison_groups
+from src.analyzer import analyze_comparison_groups, plot_comparison_heatmap
+from src.config import N_RANDOM_BASELINE
 
 
 # ── 로그 헬퍼 ────────────────────────────────────────────────────────────────
@@ -186,7 +190,7 @@ def main(args) -> None:
     for d in [FIGURES_DIR, LOGS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
 
-    total_stages = 5 if args.export else 4
+    total_stages = 4 + (1 if args.export else 0) + (1 if args.analyze else 0)
 
     print(_SEP)
     print("CASS — Cluster-Aware Feature Selection System")
@@ -195,6 +199,7 @@ def main(args) -> None:
     print(f"  Top-K    : {args.top_k}")
     print(f"  Pilot    : {'ON' if args.pilot else 'OFF'}")
     print(f"  Export   : {'ON' if args.export else 'OFF'}")
+    print(f"  Analyze  : {'ON' if args.analyze else 'OFF'}")
     print(f"  Stages   : {total_stages}")
     print(_SEP)
 
@@ -263,16 +268,40 @@ def main(args) -> None:
             FIGURES_DIR / "umap_best_subset.png",
         )
 
+    # ── 공유 비교군 (export / analyze 양쪽에서 사용) ─────────────────────────
+    groups = None
+    if (args.export or args.analyze) and best_subset:
+        groups = build_comparison_groups(
+            best_subset, filter_summary, feature_names, N_RANDOM_BASELINE
+        )
+
     # ── 5. [선택] Export ─────────────────────────────────────────────────────
+    stage = 5
     if args.export:
         if not best_subset:
-            print(f"\n[5/{total_stages}] [경고] 최적 부분집합이 없어 Export를 건너뜁니다.")
+            print(f"\n[{stage}/{total_stages}] [경고] 최적 부분집합이 없어 Export를 건너뜁니다.")
         else:
-            _header(f"[5/{total_stages}]", "비교군 Export")
+            _header(f"[{stage}/{total_stages}]", "비교군 Export")
             export_comparison_sets(
                 X_scaled, y, attack_step, feature_names,
                 best_subset, filter_summary, scaler,
             )
+        stage += 1
+
+    # ── 6. [선택] Analyze ────────────────────────────────────────────────────
+    if args.analyze:
+        if not best_subset:
+            print(f"\n[{stage}/{total_stages}] [경고] 최적 부분집합이 없어 Analyze를 건너뜁니다.")
+        else:
+            _header(f"[{stage}/{total_stages}]", "UMAP 수치 분석 및 히트맵")
+            metrics_df = analyze_comparison_groups(
+                groups, X_scaled, y, feature_names,
+            )
+            if not metrics_df.empty:
+                plot_comparison_heatmap(
+                    metrics_df,
+                    FIGURES_DIR / "comparison_heatmap.png",
+                )
 
     # ── 최종 요약 ────────────────────────────────────────────────────────────
     print(f"\n{_SEP}")
@@ -287,6 +316,8 @@ def main(args) -> None:
     if args.export:
         from src.config import EXPORTS_DIR
         _sub(f"Export 저장 위치  : {EXPORTS_DIR}")
+    if args.analyze:
+        _sub(f"히트맵 저장 위치  : {FIGURES_DIR / 'comparison_heatmap.png'}")
     print(_SEP)
 
 
@@ -315,6 +346,10 @@ def parse_args():
     parser.add_argument(
         "--export", action="store_true",
         help="비교군별 train/test CSV를 results/exports/에 저장",
+    )
+    parser.add_argument(
+        "--analyze", action="store_true",
+        help="비교군별 8개 UMAP 지표 계산 및 히트맵 저장",
     )
     return parser.parse_args()
 
