@@ -122,18 +122,23 @@ def pilot_validation(
     rows = []
     for i, subset in enumerate(tqdm(subsets, desc="  Pilot 평가")):
         try:
-            fast_sil, _ = evaluate_subset(X_scaled, y, all_feature_names, subset, fast=True)
-            full_sil, _ = evaluate_subset(X_scaled, y, all_feature_names, subset, fast=False)
+            fast_sil, emb_fast = evaluate_subset(X_scaled, y, all_feature_names, subset, fast=True)
+            fast_bm, _         = compute_boundary_camouflage(emb_fast, y)
+            full_sil, emb_full = evaluate_subset(X_scaled, y, all_feature_names, subset, fast=False)
+            full_bm, _         = compute_boundary_camouflage(emb_full, y)
             rows.append({
                 "subset_id": i,
                 "n_features": len(subset),
                 "features":   list(subset),
                 "fast_sil":   round(fast_sil, 4),
                 "full_sil":   round(full_sil, 4),
+                "fast_bm":    round(fast_bm, 4),
+                "full_bm":    round(full_bm, 4),
             })
             tqdm.write(
                 f"  [{i+1:>2}/{n}] n={len(subset):>2}"
-                f" | fast={fast_sil:+.4f}  full={full_sil:+.4f}"
+                f" | fast_bm={fast_bm:.4f}  full_bm={full_bm:.4f}"
+                f"  (fast_sil={fast_sil:+.4f}  full_sil={full_sil:+.4f})"
             )
         except Exception as e:
             tqdm.write(f"  [{i+1:>2}] 오류: {e}")
@@ -144,13 +149,13 @@ def pilot_validation(
         print("  [경고] 유효한 결과가 너무 적습니다.")
         return float("nan"), pilot_df
 
-    r, p = spearmanr(pilot_df["fast_sil"], pilot_df["full_sil"])
-    print(f"\n  Spearman r = {r:.4f}  (p={p:.4f})")
+    r, p = spearmanr(pilot_df["fast_bm"], pilot_df["full_bm"])
+    print(f"\n  Spearman r (Boundary_Mean) = {r:.4f}  (p={p:.4f})")
 
     if r >= PILOT_MIN_SPEARMAN:
-        print(f"  ✓ Fast가 Full의 유효한 proxy입니다 (r >= {PILOT_MIN_SPEARMAN})")
+        print(f"  ✓ Fast BM이 Full BM의 유효한 proxy입니다 (r >= {PILOT_MIN_SPEARMAN})")
     else:
-        print(f"  ✗ 상관이 낮습니다 (r < {PILOT_MIN_SPEARMAN}). "
+        print(f"  ✗ BM 상관이 낮습니다 (r < {PILOT_MIN_SPEARMAN}). "
               f"UMAP_PARAMS_FAST 조정을 고려하세요.")
 
     return float(r), pilot_df
@@ -388,6 +393,9 @@ def pilot_validation_with_retry(
         pilot_df   : 최종 검증 결과 DataFrame
     """
     base_neighbors = UMAP_PARAMS_FAST["n_neighbors"]
+    best_r   = float("-inf")
+    best_n   = base_neighbors
+    best_df  = None
 
     for attempt in range(max_retries + 1):
         # 매 시도마다 n_neighbors를 명시적으로 설정.
@@ -404,6 +412,11 @@ def pilot_validation_with_retry(
 
         r, pilot_df = pilot_validation(X_scaled, y, candidate_features, all_feature_names, n=n)
 
+        if not np.isnan(r) and r > best_r:
+            best_r  = r
+            best_n  = current_n
+            best_df = pilot_df
+
         if not np.isnan(r) and r >= PILOT_MIN_SPEARMAN:
             if attempt > 0:
                 print(
@@ -415,13 +428,13 @@ def pilot_validation_with_retry(
                 )
             return r, pilot_df
 
-    # 최대 재시도 초과 → 원복
-    UMAP_PARAMS_FAST["n_neighbors"] = base_neighbors
+    # 최대 재시도 초과 → 원복 없이 최고 r을 기록한 n_neighbors 유지
+    UMAP_PARAMS_FAST["n_neighbors"] = best_n
     print(
-        f"\n[Pilot] 최대 재시도 {max_retries}회 초과 (최종 r={r:.4f}). "
-        f"n_neighbors={base_neighbors} 으로 복원하고 경고와 함께 진행합니다."
+        f"\n[Pilot] 최대 재시도 {max_retries}회 초과 (최고 r={best_r:.4f}). "
+        f"최고 성능 n_neighbors={best_n} 으로 유지하고 경고와 함께 진행합니다."
     )
-    return r, pilot_df
+    return best_r, best_df if best_df is not None else pilot_df
 
 
 # ── 공개 인터페이스 ───────────────────────────────────────────────────────────

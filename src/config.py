@@ -112,12 +112,14 @@ UMAP_PARAMS = dict(
 )
 
 # Fast: 1단계 스크리닝 전용 (논문에 직접 보고되지 않음)
+# n_neighbors=80: Full(150)과의 임베딩 구조 간극을 줄여 Fast BM이 Full BM의
+# 유효한 proxy가 되도록 조정. min_dist=0.05, init='spectral'도 Full에 가깝게 설정.
 UMAP_PARAMS_FAST = dict(
-    n_neighbors=30,
-    min_dist=0.1,
+    n_neighbors=80,
+    min_dist=0.05,
     metric='manhattan',
     n_components=2,
-    init='random',
+    init='spectral',
     random_state=42,
 )
 
@@ -125,7 +127,7 @@ UMAP_PARAMS_FAST = dict(
 # gap_ratio: 인접 점수 간 gap이 max_gap의 몇 % 이하면 elbow로 판정
 ELBOW_GAP_RATIO = 0.1
 # 최소 K: elbow가 너무 작게 나와도 최소한 이 수만큼 재평가
-ELBOW_MIN_K = 3
+ELBOW_MIN_K = 8
 
 # ── Pilot 상관관계 검증 ───────────────────────────────────────────────────────
 # Fast Silhouette ↔ Full Silhouette의 Spearman 상관이 충분한지 사전 검증

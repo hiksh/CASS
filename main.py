@@ -21,7 +21,7 @@ from scipy.stats import spearmanr
 from cuml.manifold import UMAP
 
 from src.config import (
-    FIGURES_DIR, LOGS_DIR, UMAP_PARAMS,
+    FIGURES_DIR, LOGS_DIR, UMAP_PARAMS, UMAP_PARAMS_FAST,
     RANDOM_SEED, SEARCH_MODE,
     PILOT_MIN_SPEARMAN,
 )
@@ -124,25 +124,28 @@ def plot_umap_best(
 
 
 def plot_pilot(pilot_df: pd.DataFrame, spearman_r: float, save_path) -> None:
-    """Pilot 검증: Fast vs Full Silhouette 산점도."""
+    """Pilot 검증: Fast vs Full Boundary_Mean 산점도."""
+    fast_n = UMAP_PARAMS_FAST["n_neighbors"]
+    full_n = UMAP_PARAMS["n_neighbors"]
+
     fig, ax = plt.subplots(figsize=(7, 6))
     sc = ax.scatter(
-        pilot_df["fast_sil"], pilot_df["full_sil"],
+        pilot_df["fast_bm"], pilot_df["full_bm"],
         c=pilot_df["n_features"], cmap="viridis",
         alpha=0.8, s=70, edgecolors="none",
     )
     plt.colorbar(sc, ax=ax, label="Number of Features")
 
     lims = [
-        min(pilot_df["fast_sil"].min(), pilot_df["full_sil"].min()) - 0.05,
-        max(pilot_df["fast_sil"].max(), pilot_df["full_sil"].max()) + 0.05,
+        min(pilot_df["fast_bm"].min(), pilot_df["full_bm"].min()) * 0.95,
+        max(pilot_df["fast_bm"].max(), pilot_df["full_bm"].max()) * 1.05,
     ]
     ax.plot(lims, lims, "r--", alpha=0.5, linewidth=1.2, label="y = x")
 
-    ax.set_xlabel("Fast Silhouette (n_neighbors=30)", fontsize=11)
-    ax.set_ylabel("Full Silhouette (n_neighbors=150)", fontsize=11)
+    ax.set_xlabel(f"Fast Boundary_Mean (n_neighbors={fast_n})", fontsize=11)
+    ax.set_ylabel(f"Full Boundary_Mean (n_neighbors={full_n})", fontsize=11)
     ax.set_title(
-        f"Pilot 검증: Fast ↔ Full Silhouette\nSpearman r = {spearman_r:.4f}",
+        f"Pilot 검증: Fast ↔ Full Boundary_Mean\nSpearman r = {spearman_r:.4f}",
         fontsize=12, fontweight="bold",
     )
     ax.legend(fontsize=10)
