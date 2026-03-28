@@ -3,7 +3,7 @@ CASS — Evaluator (3단계: UMAP 차원 축소 + 실루엣 점수)
 
 두 모드:
   fast=False (기본): UMAP_PARAMS      — 논문 보고용, n_neighbors=150
-  fast=True        : UMAP_PARAMS_FAST — 1단계 스크리닝 전용, n_neighbors=30
+  fast=True        : UMAP_PARAMS_FAST — 1단계 스크리닝 전용, n_neighbors=80
 
 Full 재평가 시 Silhouette 외에 Boundary_Mean, Camouflage@t 도 함께 계산합니다.
 이 두 지표는 UMAP 임베딩이 완성된 후 k-NN 한 번으로 추가 비용 없이 산출됩니다.
@@ -95,8 +95,8 @@ def evaluate_subset(
     fast: bool = False,
 ) -> tuple[float, np.ndarray]:
     """
-    전체 피처 행렬에서 선택된 피처 컬럼만 추출하여 실루엣 점수를 반환합니다.
-    (Fast 스크리닝 전용 — Silhouette만 필요한 경우)
+    전체 피처 행렬에서 선택된 피처 컬럼만 추출하여 UMAP 임베딩과 Silhouette 점수를 반환합니다.
+    Fast/Full 스크리닝 및 Pilot 검증에서 사용됩니다.
     """
     feat_list = list(all_feature_names)
     idx = [feat_list.index(f) for f in selected_features]

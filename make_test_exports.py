@@ -162,10 +162,7 @@ def process_test_chunked(
 
         # clip (훈련 기준 임계값 적용)
         for col, (lo, hi) in clip_bounds.items():
-            if col in log_feats:
-                X[col] = X[col].clip(lower=lo, upper=hi)
-            else:
-                X[col] = X[col].clip(lower=lo, upper=hi)
+            X[col] = X[col].clip(lower=lo, upper=hi)
 
         # log1p
         X[log_feats] = np.log1p(X[log_feats].clip(lower=0))

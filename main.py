@@ -3,7 +3,7 @@ CASS — Main Pipeline
 Cluster-Aware Feature Selection System 전체 파이프라인 실행기.
 
 실행 예시:
-  python main.py                             # greedy, top-20
+  python main.py                             # greedy, top-30
   python main.py --mode random               # random 탐색
   python main.py --pilot                     # Pilot 검증 포함
   python main.py --mode random --n-subsets 100 --pilot
@@ -263,6 +263,7 @@ def main(args) -> None:
         save_processed=(args.dataset == "cicids2018"),
         all_features=ds["all_features"],
         udbb_counts=ds["udbb_counts"],
+        log_features=ds["log_features"],
     )
     n_benign = int(np.sum(y == 0))
     n_attack = int(np.sum(y == 1))
@@ -288,7 +289,7 @@ def main(args) -> None:
 
     # ── 2.5 [선택] Pilot 검증 ───────────────────────────────────────────────
     if args.pilot:
-        _header(f"[Pilot]", "Fast ↔ Full Silhouette 상관 검증")
+        _header(f"[Pilot]", "Fast ↔ Full Boundary_Mean 상관 검증")
         spearman_r, pilot_df = pilot_validation_with_retry(
             X_scaled, y, top_features, feature_names,
         )
@@ -336,7 +337,12 @@ def main(args) -> None:
     _sub(f"탐색 결과 저장: {results_csv}")
 
     if best_subset:
-        best_bm = results_df["boundary_mean"].max()
+        from src.config import MIN_SILHOUETTE as _MIN_SIL
+        _valid = results_df.dropna(subset=["full_sil", "boundary_mean"])
+        _survived = _valid[_valid["full_sil"] > _MIN_SIL]
+        if _survived.empty:
+            _survived = _valid
+        best_bm = _survived["boundary_mean"].max()
         _sub(f"최적 부분집합  ({len(best_subset)}개 피처 | boundary_mean={best_bm:.4f}):")
         for f in best_subset:
             _sub(f"  - {f}")
@@ -376,6 +382,7 @@ def main(args) -> None:
                 export_dir=EXPORTS_DIR,
                 test_file=ds["test_file"],
                 literature_baselines=lit_baselines,
+                log_features=ds["log_features"],
             )
         stage += 1
 
@@ -450,7 +457,7 @@ def parse_args():
     )
     parser.add_argument(
         "--pilot", action="store_true",
-        help="실행 전 Fast↔Full Silhouette 상관 검증 수행",
+        help="실행 전 Fast↔Full Boundary_Mean 상관 검증 수행",
     )
     parser.add_argument(
         "--export", action="store_true",

@@ -11,7 +11,7 @@ CASS — Search Algorithm (2단계 스크리닝)
 
 전체 흐름:
   [선택] Pilot 검증
-    → 무작위 서브셋 PILOT_N개에 대해 Fast/Full Silhouette 상관 계산
+    → 무작위 서브셋 PILOT_N개에 대해 Fast/Full Boundary_Mean 상관 계산
     → Spearman r >= PILOT_MIN_SPEARMAN 이면 Fast가 Full의 유효한 proxy임을 확인
 
   1단계 (Fast 스크리닝)
@@ -48,12 +48,12 @@ from .evaluator import evaluate_subset, evaluate_subset_full_metrics, compute_bo
 
 def find_elbow(scores_desc: np.ndarray, gap_ratio: float = None, min_k: int = None) -> int:
     """
-    내림차순 정렬된 Silhouette 점수에서 Elbow K를 결정합니다.
+    내림차순 정렬된 Boundary_Mean 점수에서 Elbow K를 결정합니다.
 
     인접 점수 간 gap이 max_gap * gap_ratio 이하로 처음 떨어지는 지점을 Elbow로 봅니다.
 
     Args:
-        scores_desc: 내림차순 정렬된 Silhouette 점수 배열
+        scores_desc: 내림차순 정렬된 Boundary_Mean 점수 배열
         gap_ratio  : Elbow 판정 임계 비율 (None → config 기본값)
         min_k      : 최소 K (None → config 기본값)
 
@@ -93,19 +93,19 @@ def pilot_validation(
     n: int = None,
 ) -> tuple[float, pd.DataFrame]:
     """
-    Fast Silhouette ↔ Full Silhouette의 Spearman 상관을 검증합니다.
+    Fast Boundary_Mean ↔ Full Boundary_Mean의 Spearman 상관을 검증합니다.
 
     무작위 서브셋 n개에 대해 두 UMAP 파라미터로 모두 실행하여
     Fast가 Full의 유효한 proxy인지 수치로 확인합니다.
 
     Returns:
         spearman_r : Spearman 상관계수
-        pilot_df   : 검증 결과 DataFrame (subset, fast_sil, full_sil)
+        pilot_df   : 검증 결과 DataFrame (subset, fast_bm, full_bm, fast_sil, full_sil)
     """
     if n is None:
         n = PILOT_N
 
-    print(f"\n[Pilot] Fast ↔ Full Silhouette 상관 검증 ({n}개 서브셋) ...")
+    print(f"\n[Pilot] Fast ↔ Full Boundary_Mean 상관 검증 ({n}개 서브셋) ...")
 
     rng_py = random.Random(RANDOM_SEED + 99)
     subsets = []
@@ -288,7 +288,7 @@ def _full_reeval(
     Returns:
         full_df: 상위 K개에 full_sil / boundary_mean / camouflage 컬럼이 채워진 DataFrame
     """
-    sort_col    = "fast_bm" if "fast_bm" in fast_df.columns else "fast_sil"
+    sort_col    = "fast_bm"
     sorted_df   = fast_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
     scores_desc = sorted_df[sort_col].values
 

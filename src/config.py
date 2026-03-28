@@ -132,7 +132,7 @@ ELBOW_GAP_RATIO = 0.1
 ELBOW_MIN_K = 8
 
 # ── Pilot 상관관계 검증 ───────────────────────────────────────────────────────
-# Fast Silhouette ↔ Full Silhouette의 Spearman 상관이 충분한지 사전 검증
+# Fast Boundary_Mean ↔ Full Boundary_Mean의 Spearman 상관이 충분한지 사전 검증
 PILOT_N             = 20    # 검증에 사용할 무작위 서브셋 수
 PILOT_MIN_SPEARMAN  = 0.7   # 이 값 이상이어야 2단계 스크리닝 신뢰 가능
 

@@ -2,7 +2,7 @@
 CASS — Exporter (비교군별 Train/Test CSV 생성)
 
 비교군:
-  cass          : UMAP Silhouette 최적 부분집합 (CASS 결과)
+  cass          : UMAP Boundary_Mean 최적 부분집합 (CASS 결과)
   anova         : ANOVA F-score 상위 N개 (pre-filter 풀 내)
   extratrees    : ExtraTrees 중요도 상위 N개 (pre-filter 풀 내)
   random[_k]    : 무작위 N개 (N_RANDOM_BASELINE회, pre-filter 풀 내)
@@ -118,13 +118,14 @@ def _extract(
 
 # ── Test 데이터 로드 ──────────────────────────────────────────────────────────
 
-def _load_test(scaler, feature_names: list, test_file=None):
+def _load_test(scaler, feature_names: list, test_file=None, log_features: list = None):
     """
     test-flow.csv를 로드하고 훈련 데이터와 동일한 scaler로 전처리합니다.
     피처 목록과 순서는 훈련 데이터와 동일하게 유지됩니다.
 
     Args:
-        test_file: 테스트 CSV 경로 (None → config TEST_FILE)
+        test_file    : 테스트 CSV 경로 (None → config TEST_FILE)
+        log_features : log1p 변환 대상 피처 목록 (None → CICIDS2018 LOG_FEATURES)
     """
     if test_file is None:
         test_file = TEST_FILE
@@ -137,6 +138,7 @@ def _load_test(scaler, feature_names: list, test_file=None):
         feature_cols=list(feature_names),
         fit_scaler=False,
         scaler=scaler,
+        log_features=log_features,
     )
     y_test    = df_test["attack_flag"].astype(int).values
     step_test = df_test["attack_step"].values
@@ -161,6 +163,7 @@ def export_comparison_sets(
     export_dir=None,
     test_file=None,
     literature_baselines: dict = None,
+    log_features: list = None,
 ) -> dict:
     """
     비교군별 train/test CSV를 exports/ 디렉토리에 저장합니다.
@@ -177,6 +180,7 @@ def export_comparison_sets(
         export_dir            : 저장 경로 (None → config EXPORTS_DIR)
         literature_baselines  : 데이터셋별 literature baseline dict
                                 (None → config LITERATURE_BASELINES)
+        log_features          : log1p 변환 대상 피처 목록 (None → CICIDS2018 LOG_FEATURES)
 
     Returns:
         groups: {group_name: [feature, ...]} 딕셔너리
@@ -215,7 +219,7 @@ def export_comparison_sets(
 
     # ── Test 데이터 로드 ─────────────────────────────────────────────────────
     print(f"\n  [2/3] Test 데이터 로드 ...")
-    X_test, y_test, step_test = _load_test(scaler, feature_names, test_file=test_file)
+    X_test, y_test, step_test = _load_test(scaler, feature_names, test_file=test_file, log_features=log_features)
 
     # ── 그룹별 CSV 저장 ──────────────────────────────────────────────────────
     n_train = len(X_scaled)

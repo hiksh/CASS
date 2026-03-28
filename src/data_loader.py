@@ -17,6 +17,7 @@ from sklearn.preprocessing import RobustScaler
 from .config import (
     TRAIN_FILE, TEST_FILE, ALL_FEATURES, LOG_FEATURES,
     UDBB_COUNTS, PROCESSED_DIR, RANDOM_SEED,
+    UNSW_LOG_FEATURES,
 )
 
 
@@ -83,6 +84,7 @@ def preprocess(
     feature_cols: list = None,
     fit_scaler: bool = True,
     scaler=None,
+    log_features: list = None,
 ):
     """
     피처 전처리 (NetFlowGap 파이프라인 기반).
@@ -92,14 +94,17 @@ def preprocess(
         feature_cols: 사용할 피처 목록 (None → ALL_FEATURES 중 존재하는 것)
         fit_scaler: True → 새 scaler fit, False → 전달된 scaler로 transform
         scaler: fit_scaler=False일 때 사용할 사전 fit된 scaler
+        log_features: log1p 변환 대상 피처 목록 (None → CICIDS2018 LOG_FEATURES)
 
     Returns:
         X_scaled (ndarray), feature_names (list), scaler
     """
     if feature_cols is None:
         feature_cols = [f for f in ALL_FEATURES if f in df.columns]
+    if log_features is None:
+        log_features = LOG_FEATURES
 
-    log_feats = [f for f in LOG_FEATURES if f in feature_cols]
+    log_feats = [f for f in log_features if f in feature_cols]
     non_log   = [f for f in feature_cols if f not in log_feats]
 
     X = df[feature_cols].copy()
@@ -139,6 +144,7 @@ def load_dataset(
     save_processed: bool = False,
     all_features: list = None,
     udbb_counts: dict = None,
+    log_features: list = None,
 ):
     """
     전체 로드 + 샘플링 + 전처리 파이프라인.
@@ -149,6 +155,7 @@ def load_dataset(
         save_processed: True → 전처리 결과 저장
         all_features  : 사용할 피처 목록 (None → config ALL_FEATURES)
         udbb_counts   : UDBB 샘플 수 (None → config UDBB_COUNTS)
+        log_features  : log1p 변환 대상 피처 목록 (None → CICIDS2018 LOG_FEATURES)
 
     Returns:
         X_scaled     : ndarray (n_samples, n_features)
@@ -164,7 +171,7 @@ def load_dataset(
     df = load_and_sample(csv_path, use_udbb=use_udbb, udbb_counts=udbb_counts)
 
     available = [f for f in all_features if f in df.columns]
-    X_scaled, feature_names, scaler = preprocess(df, feature_cols=available)
+    X_scaled, feature_names, scaler = preprocess(df, feature_cols=available, log_features=log_features)
 
     y           = df["attack_flag"].astype(int).values
     attack_step = df["attack_step"].values
