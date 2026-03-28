@@ -187,12 +187,13 @@ UNSW_FIGURES_DIR = UNSW_RESULTS_DIR / "figures"
 UNSW_LOGS_DIR    = UNSW_RESULTS_DIR / "logs"
 UNSW_EXPORTS_DIR = UNSW_RESULTS_DIR / "exports"
 
-# 수치형 피처 31개 (protocol, service, state 범주형 제외)
+# 수치형 피처 39개 (protocol, service, state 범주형 제외)
 UNSW_ALL_FEATURES = [
     "dur",
     "spkts",        "dpkts",
     "sbytes",       "dbytes",
     "rate",
+    "sttl",         "dttl",
     "sload",        "dload",
     "sloss",        "dloss",
     "sinpkt",       "dinpkt",
@@ -201,11 +202,15 @@ UNSW_ALL_FEATURES = [
     "tcprtt",       "synack",       "ackdat",
     "smean",        "dmean",
     "trans_depth",  "response_body_len",
-    "ct_src_dport_ltm", "ct_dst_sport_ltm",
-    "is_ftp_login", "ct_ftp_cmd",   "ct_flw_http_mthd", "is_sm_ips_ports",
+    "ct_srv_src",   "ct_state_ttl", "ct_dst_ltm",
+    "ct_src_dport_ltm", "ct_dst_sport_ltm", "ct_dst_src_ltm",
+    "is_ftp_login", "ct_ftp_cmd",   "ct_flw_http_mthd",
+    "ct_src_ltm",   "ct_srv_dst",   "is_sm_ips_ports",
 ]
 
 # log1p 적용 피처 (right-skewed, non-negative 연속형)
+# sttl/dttl: 0-255 bounded discrete → log1p 제외
+# ct_* count 피처: right-skewed count 데이터 → log1p 적용
 UNSW_LOG_FEATURES = [
     "dur",
     "spkts",        "dpkts",
@@ -218,7 +223,9 @@ UNSW_LOG_FEATURES = [
     "tcprtt",       "synack",       "ackdat",
     "smean",        "dmean",
     "trans_depth",  "response_body_len",
-    "ct_src_dport_ltm", "ct_dst_sport_ltm",
+    "ct_srv_src",   "ct_state_ttl", "ct_dst_ltm",
+    "ct_src_dport_ltm", "ct_dst_sport_ltm", "ct_dst_src_ltm",
+    "ct_src_ltm",   "ct_srv_dst",
 ]
 
 # UDBB 샘플링: lateral-movement, installation 제외 (소수 + PCA leakage)
@@ -237,10 +244,26 @@ UNSW_STEP_COLORS = {
     "reconnaissance": "#9B59B6",
 }
 
-# Literature baseline — 인용수 높은 UNSW-NB15 피처 선택 논문 추가 예정
-# TODO: 논문 확인 후 피처 리스트 채울 것
+# Literature baseline
 UNSW_LITERATURE_BASELINES = {
-    # "author_year": ["feature_a", "feature_b", ...],
+    # Yin et al. (2023) "IGRF-RFE: a hybrid feature selection method for
+    # MLP-based network intrusion detection on UNSW-NB15 dataset"
+    # J Big Data 10, 15 (2023). Table 6 선택 피처.
+    # 원논문은 proto/service/state를 one-hot 인코딩 포함 23개 선택.
+    # CASS는 수치형 전용 파이프라인이므로 범주형 3개 제외, 수치형 20개 사용.
+    "yin2023": [
+        "dur",
+        "spkts",        "dpkts",
+        "sbytes",       "dbytes",
+        "rate",
+        "sttl",         "dttl",
+        "dload",        "dloss",
+        "sinpkt",       "dinpkt",
+        "djit",
+        "tcprtt",       "synack",       "ackdat",
+        "smean",        "dmean",
+        "ct_state_ttl", "ct_dst_src_ltm",
+    ],
 }
 
 
