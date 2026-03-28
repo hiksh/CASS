@@ -261,7 +261,7 @@ def main(args) -> None:
 
     # ── 1. 데이터 로드 & 전처리 ─────────────────────────────────────────────
     _header(f"[1/{total_stages}]", "데이터 로드 및 전처리")
-    X_scaled, y, attack_step, feature_names, scaler, df = load_dataset(
+    X_scaled, y, attack_step, feature_names, scaler, clip_params, df = load_dataset(
         csv_path=ds["train_file"],
         use_udbb=True,
         save_processed=(args.dataset == "cicids2018"),
@@ -382,7 +382,7 @@ def main(args) -> None:
             _header(f"[{stage}/{total_stages}]", "비교군 Export")
             export_comparison_sets(
                 X_scaled, y, attack_step, feature_names,
-                best_subset, filter_summary, scaler,
+                best_subset, filter_summary, scaler, clip_params,
                 export_dir=EXPORTS_DIR,
                 test_file=ds["test_file"],
                 literature_baselines=lit_baselines,

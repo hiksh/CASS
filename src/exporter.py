@@ -118,12 +118,15 @@ def _extract(
 
 # ── Test 데이터 로드 ──────────────────────────────────────────────────────────
 
-def _load_test(scaler, feature_names: list, test_file=None, log_features: list = None):
+def _load_test(scaler, feature_names: list, clip_params: dict,
+               test_file=None, log_features: list = None):
     """
-    test-flow.csv를 로드하고 훈련 데이터와 동일한 scaler로 전처리합니다.
+    test-flow.csv를 로드하고 훈련 데이터와 동일한 scaler·clip_params로 전처리합니다.
     피처 목록과 순서는 훈련 데이터와 동일하게 유지됩니다.
 
     Args:
+        scaler       : 훈련 데이터에 fit된 RobustScaler
+        clip_params  : 훈련 기준 {col: (lower, upper)} clip 경계
         test_file    : 테스트 CSV 경로 (None → config TEST_FILE)
         log_features : log1p 변환 대상 피처 목록 (None → CICIDS2018 LOG_FEATURES)
     """
@@ -133,12 +136,13 @@ def _load_test(scaler, feature_names: list, test_file=None, log_features: list =
     df_test = load_and_sample(test_file, use_udbb=False)
     print(f"    원본 test 행 수  : {len(df_test):,}")
 
-    X_test, _, _ = preprocess(
+    X_test, _, _, _ = preprocess(
         df_test,
         feature_cols=list(feature_names),
         fit_scaler=False,
         scaler=scaler,
         log_features=log_features,
+        clip_params=clip_params,
     )
     y_test    = df_test["attack_flag"].astype(int).values
     step_test = df_test["attack_step"].values
@@ -159,6 +163,7 @@ def export_comparison_sets(
     best_features: list,
     filter_summary: pd.DataFrame,
     scaler,
+    clip_params: dict,
     n_random: int = None,
     export_dir=None,
     test_file=None,
@@ -176,6 +181,7 @@ def export_comparison_sets(
         best_features         : CASS 최적 피처 리스트
         filter_summary        : pre_filter 순위표 DataFrame
         scaler                : 훈련 데이터에 fit된 RobustScaler
+        clip_params           : 훈련 기준 {col: (lower, upper)} clip 경계
         n_random              : 랜덤 비교군 횟수 (None → config 기본값)
         export_dir            : 저장 경로 (None → config EXPORTS_DIR)
         literature_baselines  : 데이터셋별 literature baseline dict
@@ -219,7 +225,10 @@ def export_comparison_sets(
 
     # ── Test 데이터 로드 ─────────────────────────────────────────────────────
     print(f"\n  [2/3] Test 데이터 로드 ...")
-    X_test, y_test, step_test = _load_test(scaler, feature_names, test_file=test_file, log_features=log_features)
+    X_test, y_test, step_test = _load_test(
+        scaler, feature_names, clip_params,
+        test_file=test_file, log_features=log_features,
+    )
 
     # ── 그룹별 CSV 저장 ──────────────────────────────────────────────────────
     n_train = len(X_scaled)

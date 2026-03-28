@@ -85,6 +85,7 @@ def preprocess(
     fit_scaler: bool = True,
     scaler=None,
     log_features: list = None,
+    clip_params: dict = None,
 ):
     """
     피처 전처리 (NetFlowGap 파이프라인 기반).
@@ -95,9 +96,11 @@ def preprocess(
         fit_scaler: True → 새 scaler fit, False → 전달된 scaler로 transform
         scaler: fit_scaler=False일 때 사용할 사전 fit된 scaler
         log_features: log1p 변환 대상 피처 목록 (None → CICIDS2018 LOG_FEATURES)
+        clip_params: {col: (lower, upper)} — fit_scaler=False 시 훈련 기준 clip 경계.
+                     None이면 입력 데이터 기준으로 계산 (fit_scaler=True 전용).
 
     Returns:
-        X_scaled (ndarray), feature_names (list), scaler
+        X_scaled (ndarray), feature_names (list), scaler, clip_params (dict)
     """
     if feature_cols is None:
         feature_cols = [f for f in ALL_FEATURES if f in df.columns]
@@ -114,14 +117,28 @@ def preprocess(
     X = X.fillna(X.median())
 
     # Percentile clipping
-    for col in log_feats:
-        upper = X[col].quantile(0.99)
-        X[col] = X[col].clip(lower=0, upper=upper)
-
-    for col in non_log:
-        lower = X[col].quantile(0.01)
-        upper = X[col].quantile(0.99)
-        X[col] = X[col].clip(lower=lower, upper=upper)
+    if fit_scaler:
+        # 훈련 데이터 기준으로 clip 경계 계산 및 저장
+        clip_params = {}
+        for col in log_feats:
+            upper = float(X[col].quantile(0.99))
+            clip_params[col] = (0.0, upper)
+            X[col] = X[col].clip(lower=0, upper=upper)
+        for col in non_log:
+            lower = float(X[col].quantile(0.01))
+            upper = float(X[col].quantile(0.99))
+            clip_params[col] = (lower, upper)
+            X[col] = X[col].clip(lower=lower, upper=upper)
+    else:
+        # 훈련 기준 clip 경계 적용 (test 데이터 통계 사용 금지)
+        if clip_params is None:
+            raise ValueError("fit_scaler=False일 때 clip_params를 반드시 전달해야 합니다.")
+        for col in log_feats:
+            lo, hi = clip_params[col]
+            X[col] = X[col].clip(lower=lo, upper=hi)
+        for col in non_log:
+            lo, hi = clip_params[col]
+            X[col] = X[col].clip(lower=lo, upper=hi)
 
     # log1p 변환
     X[log_feats] = np.log1p(X[log_feats].clip(lower=0))
@@ -135,7 +152,7 @@ def preprocess(
             raise ValueError("fit_scaler=False일 때 scaler를 반드시 전달해야 합니다.")
         X_scaled = scaler.transform(X)
 
-    return X_scaled, list(feature_cols), scaler
+    return X_scaled, list(feature_cols), scaler, clip_params
 
 
 def load_dataset(
@@ -163,6 +180,7 @@ def load_dataset(
         attack_step  : ndarray (n_samples,) — 문자열 레이블
         feature_names: list
         scaler       : 학습된 RobustScaler
+        clip_params  : dict {col: (lower, upper)} — 훈련 기준 clip 경계
         df           : 원본 샘플링 DataFrame (레이블 접근용)
     """
     if all_features is None:
@@ -171,7 +189,7 @@ def load_dataset(
     df = load_and_sample(csv_path, use_udbb=use_udbb, udbb_counts=udbb_counts)
 
     available = [f for f in all_features if f in df.columns]
-    X_scaled, feature_names, scaler = preprocess(df, feature_cols=available, log_features=log_features)
+    X_scaled, feature_names, scaler, clip_params = preprocess(df, feature_cols=available, log_features=log_features)
 
     y           = df["attack_flag"].astype(int).values
     attack_step = df["attack_step"].values
@@ -185,4 +203,4 @@ def load_dataset(
         out.to_csv(save_path, index=False)
         print(f"전처리 데이터 저장: {save_path}")
 
-    return X_scaled, y, attack_step, feature_names, scaler, df
+    return X_scaled, y, attack_step, feature_names, scaler, clip_params, df
