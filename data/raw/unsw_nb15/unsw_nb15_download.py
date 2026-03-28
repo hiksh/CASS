@@ -36,8 +36,8 @@ KAGGLE_DATASET = "mrwellsdavid/unsw-nb15"
 
 # 다운로드할 파일 → 출력 파일명 매핑
 FILE_MAP = {
-    "UNSW_NB15_training-set.csv": "training-flow.csv",
-    "UNSW_NB15_testing-set.csv":  "test-flow.csv",
+    "UNSW_NB15_training-set.csv": "test-flow.csv",
+    "UNSW_NB15_testing-set.csv":  "training-flow.csv",
 }
 
 # ── 컬럼 설정 ─────────────────────────────────────────────────────────────────
