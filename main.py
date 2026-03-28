@@ -440,7 +440,7 @@ def parse_args():
         "--mode", choices=["greedy", "random"], default=SEARCH_MODE,
     )
     parser.add_argument(
-        "--top-k", type=int, default=20, dest="top_k",
+        "--top-k", type=int, default=30, dest="top_k",
         help="Pre-filter 후 유지할 피처 수",
     )
     parser.add_argument(
