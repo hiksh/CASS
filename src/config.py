@@ -16,8 +16,8 @@ FIGURES_DIR   = RESULTS_DIR / "cicids2018" / "figures"
 LOGS_DIR      = RESULTS_DIR / "cicids2018" / "logs"
 EXPORTS_DIR   = RESULTS_DIR / "cicids2018" / "exports"
 
-TRAIN_FILE = RAW_DIR / "training-flow.csv"
-TEST_FILE  = RAW_DIR / "test-flow.csv"
+TRAIN_FILE = RAW_DIR / "cicids2018" / "training-flow.csv"
+TEST_FILE  = RAW_DIR / "cicids2018" / "test-flow.csv"
 
 # ── CICIDS2018 전체 피처 (timestamp·레이블 컬럼 제외, 78개) ──────────────────
 ALL_FEATURES = [
@@ -177,7 +177,7 @@ LITERATURE_BASELINES = {
 # UNSW-NB15 데이터셋 설정
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-_UNSW_DIR = BASE_DIR.parent / "datasets" / "unsw-nb15"
+_UNSW_DIR = RAW_DIR / "unsw_nb15"
 
 UNSW_TRAIN_FILE = _UNSW_DIR / "training-flow.csv"
 UNSW_TEST_FILE  = _UNSW_DIR / "test-flow.csv"
