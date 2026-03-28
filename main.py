@@ -375,6 +375,7 @@ def main(args) -> None:
                 best_subset, filter_summary, scaler,
                 export_dir=EXPORTS_DIR,
                 test_file=ds["test_file"],
+                literature_baselines=lit_baselines,
             )
         stage += 1
 

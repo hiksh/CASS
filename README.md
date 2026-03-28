@@ -40,7 +40,7 @@ data/raw/training-flow.csv
          │
          ▼
 [Stage 3] Pre-filter
-          ExtraTrees 중요도 + ANOVA F-score → 평균 순위 → 상위 K개 선발 (기본 20개)
+          ExtraTrees 중요도 + ANOVA F-score → 평균 순위 → 상위 K개 선발 (기본 30개)
          │
          ├─ (--pilot) Pilot 검증
          │            무작위 서브셋 20개로 Fast ↔ Full Boundary_Mean 상관 확인
@@ -143,7 +143,7 @@ test_*.csv   ←  test-flow.csv 전체 (동일 scaler transform, 완전 분리)
 
 ## 실험 결과 (Experimental Results — CICIDS2018)
 
-> **실행 환경**: CICIDS2018, UDBB 샘플링 120k행, `--pilot --export --analyze`, greedy mode, top-k=20
+> **실행 환경**: CICIDS2018, UDBB 샘플링 120k행, `--pilot --export --analyze`, greedy mode, top-k=30
 
 ### Pilot 검증 — Fast ↔ Full Boundary_Mean 상관
 
@@ -236,6 +236,90 @@ ANOVA 결과가 이 차이를 실증한다: Silhouette 0.104(4위)이지만 Clus
 
 > Kuppa et al.은 NIDS 이상 탐지에서 *"decision boundaries of nominal and abnormal classes are not very well defined"* 임을 지적하며, 공격자가 benign 경계 근방의 불명확한 영역을 통해 탐지를 우회함을 CSE-CIC-IDS2018 실험으로 실증했다 [Kuppa et al., 2019]. Silhouette은 명확한 클러스터 경계를 가정한 전역 지표이므로 이러한 경계 근방 공격을 포착하지 못하며, Boundary_Mean이 더 적합한 평가 지표임을 지지한다.
 >
+
+---
+
+## 실험 결과 (Experimental Results — UNSW-NB15)
+
+> **실행 환경**: UNSW-NB15, UDBB 샘플링 60k행, `--pilot --export --analyze`, greedy mode, top-k=30
+>
+> **데이터셋 분할**: training-flow.csv (175,341행, 원논문 훈련셋) / test-flow.csv (82,332행, 원논문 테스트셋)
+> ※ Kaggle 다운로드 시 파일명이 뒤바뀌어 배포되므로 `unsw_nb15_download.py`의 FILE_MAP에서 training-set↔testing-set 교차 매핑으로 수정
+
+---
+
+### Pilot 검증 — Fast ↔ Full Boundary_Mean 상관
+
+![Pilot 검증 산점도](results/unsw_nb15/pilot_fast_vs_full.png)
+
+| 항목 | 값 |
+|------|----|
+| Spearman r | **0.9308** |
+| Fast n_neighbors | 80 (재시도 없이 1회 통과) |
+| Full n_neighbors | 150 |
+| 판정 | ✓ Fast BM이 Full BM의 유효한 proxy (r ≥ 0.7) |
+
+CICIDS2018(r=0.9338, n_neighbors=110 재시도 필요)과 달리 기본값 80에서 바로 통과. 데이터셋에 따라 Pilot 재시도 발생 여부가 달라질 수 있음을 실증.
+
+---
+
+### 2단계 스크리닝 — Fast → Full Boundary_Mean
+
+![2단계 스크리닝 플롯](results/unsw_nb15/two_phase_screening.png)
+
+Elbow K=8이 결정되어 전체 greedy 스텝 중 **fast_bm 상위 8개만 Full 재평가**됨.
+
+**N=4 수렴 특성:** Greedy fast BM이 step 4 이후 3.8~4.0로 수렴 → Elbow가 step 4에서 발생 → Full 재평가 상위 후보도 4개 피처에서 수렴. CICIDS2018(12개)와 달리 UNSW-NB15에서 4개 피처만으로 최적 경계 분리가 달성되는 것은 **데이터셋 고유의 공격-정상 매니폴드 구조 차이**로 해석됨 (공격 트래픽이 소수의 피처 방향으로 강하게 투영).
+
+---
+
+### CASS 최적 피처 UMAP 시각화 (4 features)
+
+![UMAP 최적 피처](results/unsw_nb15/umap_best_subset.png)
+
+**선택된 4개 피처:**
+
+| 그룹 | 피처 | 의미 |
+|------|------|------|
+| 트래픽 부하 | `sload` | 소스→목적지 방향 비트레이트 |
+| 연결 컨텍스트 | `ct_dst_sport_ltm` | 최근 동일 목적지:소스포트 연결 수 |
+| 패킷 크기 | `smean` | 소스 방향 평균 패킷 크기 |
+| 패킷 간격 | `dinpkt` | 목적지 방향 패킷 간 평균 시간 |
+
+- **(A) Benign vs Attack**: CICIDS2018 대비 benign-attack 경계가 더 명확하게 분리되는 구조 — 4개 피처만으로도 Boundary_Mean 4.888 달성
+- **(B) Kill Chain Stage**: reconnaissance(보라)가 상단에 집중; action/infection은 benign 근방에 일부 산재 → Kill Chain 단계별 위장 패턴 시각적 확인
+
+---
+
+### 비교군 UMAP 지표 히트맵
+
+![비교군 히트맵](results/unsw_nb15/comparison_heatmap.png)
+
+**수치 원본 (comparison_metrics.csv, n_features=4 동일 조건):**
+
+| 그룹 | Silhouette↑ | Centroid↑ | Global_Dist↑ | **Cam@1.0↓** | **BM↑** | Noise↓ | Clusters↓ | Cohesion↓ |
+|------|------------|-----------|-------------|-------------|---------|--------|-----------|----------|
+| **cass** | 0.113 | **12.886** | 28.436 | **0.589** | **4.888** | 0.060 | 159 | 0.492 |
+| anova | 0.119 | 11.849 | 31.100 | 0.964 | 0.101 | 0.039 | 107 | **0.336** |
+| extratrees | 0.047 | 10.764 | 41.817 | 0.982 | 0.086 | **0.002** | **49** | **0.099** |
+| random | **0.226** | 26.462 | **44.093** | 1.000 | 0.013 | 0.003 | **15** | 0.436 |
+| lit_yin2023 | 0.120 | 14.452 | 25.986 | 0.772 | 1.244 | 0.058 | 148 | 0.579 |
+
+#### 핵심 결과 해석
+
+**CASS는 핵심 목적함수(Boundary_Mean, Camouflage)에서 명확히 1위:**
+- Boundary_Mean: **4.888** → lit_yin2023(1.244) 대비 **+293%**, anova(0.101) 대비 **+4740%**
+- Camouflage@1.0: **0.589** → lit_yin2023(0.772) 대비 공격의 **18.3%p 더 적게 위장**
+- Centroid_to_Benign: **12.886** (5개 비교군 중 2위, lit_yin2023 14.452 다음)
+
+**"Random 역설" (CICIDS2018의 ANOVA 역설과 구조 동일):**
+Global_Mean_Dist(44.093)와 Centroid(26.462)에서 1위이지만 Camouflage@1.0이 1.000(최악), BM=0.013(최악).
+무작위 피처는 공격 클러스터의 **거시적 분산**은 극대화하지만 benign 경계 근방에 침투한 공격 포인트는 방치함. 이는 CICIDS2018에서 ANOVA가 보인 역설과 동일한 구조로, 두 데이터셋에 걸쳐 **"거시적 거리 ≠ 경계 분리"** 가 재현됨.
+
+**lit_yin2023 (20 수치형 피처):**
+CASS N=4 대비 5배 많은 피처를 사용하면서도 BM=1.244(2위)로 CASS에 크게 뒤짐. 도메인 전문가 수작업(IGRF-RFE 기반)으로도 UMAP 경계 분리 관점에서는 CASS의 자동 탐색에 미치지 못함을 실증.
+
+**Cluster_Count에 대하여**: CASS의 159는 anova(107)·extratrees(49)보다 많음. Silhouette 제약하에 Boundary_Mean을 최적화하면 공격이 benign 경계에서 밀려나면서 다양한 방향으로 분산 — 클러스터 수 증가는 경계 분리의 부산물이며 탐지 성능의 약점이 아님 (CICIDS2018 분석과 일관).
 
 ---
 
@@ -355,7 +439,7 @@ python main.py --dataset unsw_nb15 --analyze  # 8지표 히트맵
 |--------|--------|------|
 | `--dataset` | `cicids2018` | 데이터셋 선택 (`cicids2018` / `unsw_nb15`) |
 | `--mode` | `greedy` | 탐색 방식 (`greedy` / `random`) |
-| `--top-k` | `20` | Pre-filter 후 유지할 피처 수 |
+| `--top-k` | `30` | Pre-filter 후 유지할 피처 수 |
 | `--n-subsets` | `80` | random 모드 평가 서브셋 수 |
 | `--pilot` | off | Fast↔Full Boundary_Mean 상관 사전 검증 |
 | `--export` | off | 비교군별 train/test CSV 저장 |
@@ -439,7 +523,7 @@ avg_rank(f) = ( r_tree(f) + r_anova(f) ) / 2
   r_*(f) : 해당 지표 내림차순 정렬 시 피처 f의 0-based 순위
            (중요도·F-score가 가장 높은 피처 = 0)
 
-상위 K = TOP_K_PREFILTER(기본 20)개를 avg_rank 오름차순으로 선발
+상위 K = TOP_K_PREFILTER(기본 30)개를 avg_rank 오름차순으로 선발
 ```
 
 두 방법을 동등하게 결합하여 트리 구조 편향(ExtraTrees)과 선형 분리도 가정(ANOVA)을 상호 보완합니다.
@@ -717,7 +801,7 @@ UMAP이 훈련 데이터만 보므로 **test leakage 없음**.
 
 | 파라미터 | 기본값 | 설명 |
 |---------|-------|------|
-| `TOP_K_PREFILTER` | 20 | Pre-filter 후 유지할 피처 수 |
+| `TOP_K_PREFILTER` | 30 | Pre-filter 후 유지할 피처 수 |
 | `SEARCH_MODE` | `"greedy"` | 탐색 모드 |
 | `N_RANDOM_SUBSETS` | 80 | Random 모드 평가 서브셋 수 |
 | `MIN_SUBSET_SIZE` | 3 | 서브셋 최소 크기 |

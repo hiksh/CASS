@@ -160,20 +160,23 @@ def export_comparison_sets(
     n_random: int = None,
     export_dir=None,
     test_file=None,
+    literature_baselines: dict = None,
 ) -> dict:
     """
     비교군별 train/test CSV를 exports/ 디렉토리에 저장합니다.
 
     Args:
-        X_scaled       : 전처리된 훈련 피처 행렬 (UDBB 샘플)
-        y              : 훈련 레이블
-        attack_step    : 훈련 Kill Chain 레이블
-        feature_names  : 로드된 전체 피처 이름 목록
-        best_features  : CASS 최적 피처 리스트
-        filter_summary : pre_filter 순위표 DataFrame
-        scaler         : 훈련 데이터에 fit된 RobustScaler
-        n_random       : 랜덤 비교군 횟수 (None → config 기본값)
-        export_dir     : 저장 경로 (None → config EXPORTS_DIR)
+        X_scaled              : 전처리된 훈련 피처 행렬 (UDBB 샘플)
+        y                     : 훈련 레이블
+        attack_step           : 훈련 Kill Chain 레이블
+        feature_names         : 로드된 전체 피처 이름 목록
+        best_features         : CASS 최적 피처 리스트
+        filter_summary        : pre_filter 순위표 DataFrame
+        scaler                : 훈련 데이터에 fit된 RobustScaler
+        n_random              : 랜덤 비교군 횟수 (None → config 기본값)
+        export_dir            : 저장 경로 (None → config EXPORTS_DIR)
+        literature_baselines  : 데이터셋별 literature baseline dict
+                                (None → config LITERATURE_BASELINES)
 
     Returns:
         groups: {group_name: [feature, ...]} 딕셔너리
@@ -195,7 +198,10 @@ def export_comparison_sets(
 
     # ── 비교군 구성 ──────────────────────────────────────────────────────────
     print("\n  [1/3] 비교군 피처 리스트 생성 ...")
-    groups = build_comparison_groups(best_features, filter_summary, feature_names, n_random)
+    groups = build_comparison_groups(
+        best_features, filter_summary, feature_names, n_random,
+        literature_baselines=literature_baselines,
+    )
 
     # 비교군 요약 출력
     print(f"\n  {'그룹':<20} {'피처 수':>6}  {'상위 4개 피처 (미리보기)'}")
