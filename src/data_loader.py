@@ -20,19 +20,22 @@ from .config import (
 )
 
 
-def load_and_sample(csv_path=None, use_udbb=True) -> pd.DataFrame:
+def load_and_sample(csv_path=None, use_udbb=True, udbb_counts=None) -> pd.DataFrame:
     """
     CSV 파일을 로드하고 UDBB 샘플링을 적용합니다.
 
     Args:
-        csv_path: CSV 경로 (None이면 config의 TRAIN_FILE 사용)
-        use_udbb: True → UDBB 샘플링, False → 전체 데이터 반환
+        csv_path   : CSV 경로 (None이면 config의 TRAIN_FILE 사용)
+        use_udbb   : True → UDBB 샘플링, False → 전체 데이터 반환
+        udbb_counts: 샘플 수 딕셔너리 (None이면 config의 UDBB_COUNTS 사용)
 
     Returns:
         샘플링된 DataFrame
     """
     if csv_path is None:
         csv_path = TRAIN_FILE
+    if udbb_counts is None:
+        udbb_counts = UDBB_COUNTS
 
     print(f"Loading {csv_path} ...")
     df = pd.read_csv(csv_path, low_memory=False)
@@ -50,12 +53,12 @@ def load_and_sample(csv_path=None, use_udbb=True) -> pd.DataFrame:
 
     # Benign
     benign_pool = df[df["attack_flag"] == 0]
-    n_benign = min(UDBB_COUNTS["benign"], len(benign_pool))
+    n_benign = min(udbb_counts["benign"], len(benign_pool))
     samples.append(benign_pool.sample(n=n_benign, random_state=RANDOM_SEED))
     print(f"  benign       : {n_benign:,}")
 
     # 공격 단계별
-    for step, n_target in UDBB_COUNTS.items():
+    for step, n_target in udbb_counts.items():
         if step == "benign":
             continue
         pool = df[(df["attack_flag"] == 1) & (df["attack_step"] == step)]
@@ -134,9 +137,18 @@ def load_dataset(
     csv_path=None,
     use_udbb: bool = True,
     save_processed: bool = False,
+    all_features: list = None,
+    udbb_counts: dict = None,
 ):
     """
     전체 로드 + 샘플링 + 전처리 파이프라인.
+
+    Args:
+        csv_path      : CSV 경로 (None → config TRAIN_FILE)
+        use_udbb      : True → UDBB 샘플링
+        save_processed: True → 전처리 결과 저장
+        all_features  : 사용할 피처 목록 (None → config ALL_FEATURES)
+        udbb_counts   : UDBB 샘플 수 (None → config UDBB_COUNTS)
 
     Returns:
         X_scaled     : ndarray (n_samples, n_features)
@@ -146,9 +158,12 @@ def load_dataset(
         scaler       : 학습된 RobustScaler
         df           : 원본 샘플링 DataFrame (레이블 접근용)
     """
-    df = load_and_sample(csv_path, use_udbb=use_udbb)
+    if all_features is None:
+        all_features = ALL_FEATURES
 
-    available = [f for f in ALL_FEATURES if f in df.columns]
+    df = load_and_sample(csv_path, use_udbb=use_udbb, udbb_counts=udbb_counts)
+
+    available = [f for f in all_features if f in df.columns]
     X_scaled, feature_names, scaler = preprocess(df, feature_cols=available)
 
     y           = df["attack_flag"].astype(int).values

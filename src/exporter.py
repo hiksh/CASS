@@ -34,6 +34,7 @@ def build_comparison_groups(
     filter_summary: pd.DataFrame,
     feature_names: list,
     n_random: int,
+    literature_baselines: dict = None,
 ) -> dict:
     """
     비교군별 피처 리스트 딕셔너리를 생성합니다.
@@ -81,8 +82,10 @@ def build_comparison_groups(
         sampled = sorted(rng.sample(candidate_pool, min(N, pool_size)))
         groups[key] = sampled
 
-    # 5) Literature baselines  (config.py LITERATURE_BASELINES)
-    for name, feats in LITERATURE_BASELINES.items():
+    # 5) Literature baselines
+    if literature_baselines is None:
+        literature_baselines = LITERATURE_BASELINES
+    for name, feats in literature_baselines.items():
         valid   = [f for f in feats if f in feat_set]
         missing = [f for f in feats if f not in feat_set]
         if missing:
@@ -115,13 +118,18 @@ def _extract(
 
 # ── Test 데이터 로드 ──────────────────────────────────────────────────────────
 
-def _load_test(scaler, feature_names: list):
+def _load_test(scaler, feature_names: list, test_file=None):
     """
     test-flow.csv를 로드하고 훈련 데이터와 동일한 scaler로 전처리합니다.
     피처 목록과 순서는 훈련 데이터와 동일하게 유지됩니다.
+
+    Args:
+        test_file: 테스트 CSV 경로 (None → config TEST_FILE)
     """
-    print(f"    test-flow.csv 로드 중 ...")
-    df_test = load_and_sample(TEST_FILE, use_udbb=False)
+    if test_file is None:
+        test_file = TEST_FILE
+    print(f"    {test_file.name} 로드 중 ...")
+    df_test = load_and_sample(test_file, use_udbb=False)
     print(f"    원본 test 행 수  : {len(df_test):,}")
 
     X_test, _, _ = preprocess(
@@ -151,6 +159,7 @@ def export_comparison_sets(
     scaler,
     n_random: int = None,
     export_dir=None,
+    test_file=None,
 ) -> dict:
     """
     비교군별 train/test CSV를 exports/ 디렉토리에 저장합니다.
@@ -200,7 +209,7 @@ def export_comparison_sets(
 
     # ── Test 데이터 로드 ─────────────────────────────────────────────────────
     print(f"\n  [2/3] Test 데이터 로드 ...")
-    X_test, y_test, step_test = _load_test(scaler, feature_names)
+    X_test, y_test, step_test = _load_test(scaler, feature_names, test_file=test_file)
 
     # ── 그룹별 CSV 저장 ──────────────────────────────────────────────────────
     n_train = len(X_scaled)

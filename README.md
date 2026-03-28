@@ -141,6 +141,104 @@ test_*.csv   ←  test-flow.csv 전체 (동일 scaler transform, 완전 분리)
 
 ---
 
+## 실험 결과 (Experimental Results — CICIDS2018)
+
+> **실행 환경**: CICIDS2018, UDBB 샘플링 120k행, `--pilot --export --analyze`, greedy mode, top-k=20
+
+### Pilot 검증 — Fast ↔ Full Boundary_Mean 상관
+
+![Pilot 검증 산점도](results/figures/pilot_fast_vs_full.png)
+
+| 항목 | 값 |
+|------|----|
+| Spearman r | **0.9338** |
+| Fast n_neighbors | 110 (base 80 → 재시도 1회로 자동 조정) |
+| Full n_neighbors | 150 |
+| 판정 | ✓ Fast BM이 Full BM의 유효한 proxy (r ≥ 0.7) |
+
+base n_neighbors=80에서 r<0.7이 나와 `pilot_validation_with_retry`가 80→110으로 자동 조정한 후 통과. 이후 모든 Fast 스크리닝은 n_neighbors=110으로 진행됨.
+
+---
+
+### 2단계 스크리닝 — Fast → Full Boundary_Mean
+
+![2단계 스크리닝 플롯](results/figures/two_phase_screening.png)
+
+Elbow K=8이 결정되어 전체 20 스텝 중 **fast_bm 상위 8개(스텝 11~20)만 Full 재평가**됨.
+
+| Fast 순위 | Step | Fast BM | Full BM | 비고 |
+|----------|------|---------|---------|------|
+| 1위 | 11 | 9.008 | 7.750 | Full에서 4위로 하락 |
+| 2위 | 20 | 8.866 | 6.298 | Full에서 7위로 하락 |
+| **5위** | **12** | **8.250** | **9.493** | **→ Full 1위로 역전, 최종 선택** |
+| 7위 | 13 | 8.108 | 8.543 | Full에서 2위로 상승 |
+
+**2단계 스크리닝의 필요성 직접 입증**: Fast 1위(step 11)를 그대로 선택했다면 Full BM 7.75에 그쳤으나, Full 재평가를 통해 실제 최적(9.49)을 발견함.
+
+---
+
+### CASS 최적 피처 UMAP 시각화 (12 features)
+
+![UMAP 최적 피처](results/figures/umap_best_subset.png)
+
+**선택된 12개 피처:**
+
+| 그룹 | 피처 |
+|------|------|
+| 패킷 크기 (6개) | pkt len mean, pkt len max, pkt len min, pkt size avg, bwd pkt len min, fwd pkt len max |
+| 기타 (6개) | totlen fwd pkts, dst port, init bwd win byts, flow iat mean, fwd seg size min, fwd iat mean |
+
+- **(A) Benign vs Attack**: 공격(적색)이 정상(청색) 공간 전반에 분산 — 실제 NIDS 환경의 위장 패턴 반영
+- **(B) Kill Chain Stage**: installation(초록)은 명확히 분리; action·infection은 benign과 혼재 → 단계별 탐지 난이도 차이 시각적 확인
+
+---
+
+### 비교군 UMAP 지표 히트맵
+
+![비교군 히트맵](results/figures/comparison_heatmap.png)
+
+**수치 원본 (comparison_metrics.csv, n_features=12 동일 조건):**
+
+| 그룹 | Silhouette↑ | Centroid↑ | Global_Dist↑ | **BM↑** | **Cam@1.0↓** | Noise↓ | Clusters↓ | Cohesion↓ |
+|------|------------|-----------|-------------|---------|-------------|--------|-----------|----------|
+| **cass** | **0.139** | 14.065 | 26.552 | **9.493** | **0.216** | 0.050 | 264 | 0.476 |
+| anova | 0.104 | **14.692** | **39.528** | 2.676 | 0.693 | **0.020** | **55** | **0.236** |
+| extratrees | 0.100 | 11.504 | 26.012 | 7.980 | 0.281 | 0.041 | 218 | 0.589 |
+| random | 0.122 | 13.753 | 26.331 | 4.798 | 0.516 | 0.047 | 222 | 0.512 |
+| lit_umar2024 | 0.112 | 10.616 | 25.839 | 7.124 | 0.258 | 0.044 | 230 | 0.609 |
+
+#### 핵심 결과 해석
+
+**CASS는 핵심 목적함수(Boundary_Mean, Camouflage)에서 명확히 1위:**
+- Boundary_Mean: 9.493 → umar2024 대비 **+33%**, extratrees 대비 **+19%**
+- Camouflage@1.0: 0.216 → umar2024(0.258) 대비 공격의 **16%p 더 적게 위장**
+- Silhouette: 0.139 → 5개 비교군 중 **1위**
+
+**ANOVA의 역설**: Global_Mean_Dist(39.5), Centroid(14.7), Cluster_Count(55)에서 1위이지만 Boundary_Mean 2.676(꼴찌), Camouflage@1.0 0.693(꼴찌). 공격 클러스터의 **거시적 무게중심**은 benign에서 멀지만, **경계 영역에 침투한 공격 포인트**는 방치함.
+
+**Cluster_Count에 대하여**: CASS는 264로 최대값. CASS는 공격 클러스터의 내부 응집도가 아닌 **benign 경계로부터의 분리**를 최적화하므로, 공격이 넓게 분산되는 것은 설계 특성이며 약점이 아님.
+
+---
+
+### Silhouette 절대값에 관한 해석
+
+CASS의 Silhouette 0.139는 5개 비교군 중 최고값이지만, 절대 수치가 낮아 보일 수 있다. 이는 CASS의 한계가 아니라 **데이터와 평가 지표의 특성**에서 기인한다.
+
+**Silhouette의 구조적 한계 (NIDS 맥락):**
+Silhouette은 *전역적(global)* 클러스터 분리도를 측정한다. 즉, 각 포인트가 동일 클래스 내부와 반대 클래스 전체와의 평균 거리 비교를 기반으로 한다. 그러나 실제 위장 공격(Camouflage Attack)의 위협은 **전역적 분리가 아니라, 공격 트래픽 일부가 benign 경계 근방에 국소적(locally)으로 침투하는 것**이다.
+
+- Silhouette이 높더라도: 공격 클러스터의 일부가 benign 영역 가장자리에 밀착해 있으면 탐지 모델이 misclassify할 수 있다.
+- Boundary_Mean은 이 **경계 침투를 직접 측정**한다 — 각 공격 포인트에서 가장 가까운 benign까지의 거리.
+
+ANOVA 결과가 이 차이를 실증한다: Silhouette 0.104(4위)이지만 Cluster_Count 55(1위)로 거시적 분리는 우수 → 그러나 Camouflage@1.0 0.693으로 경계 침투는 최악. 반대로 CASS는 Silhouette 0.139(1위)이면서 Camouflage@1.0 0.216(1위)으로 지역적 경계 분리에서 압도적.
+
+> **결론:** 피처 선택의 목적이 "NIDS에서 위장 공격 억제"라면, 전역 분리도(Silhouette)보다 경계 근방 분리도(Boundary_Mean, Camouflage)가 더 적합한 평가 지표다. CASS는 이 지표를 직접 목적함수로 삼았으며, 결과적으로 모든 관련 지표에서 1위를 달성했다.
+
+> Kuppa et al.은 NIDS 이상 탐지에서 *"decision boundaries of nominal and abnormal classes are not very well defined"* 임을 지적하며, 공격자가 benign 경계 근방의 불명확한 영역을 통해 탐지를 우회함을 CSE-CIC-IDS2018 실험으로 실증했다 [Kuppa et al., 2019]. Silhouette은 명확한 클러스터 경계를 가정한 전역 지표이므로 이러한 경계 근방 공격을 포착하지 못하며, Boundary_Mean이 더 적합한 평가 지표임을 지지한다.
+>
+
+---
+
 ## 프로젝트 구조 (Directory Structure)
 
 ```
@@ -152,7 +250,7 @@ CASS/
 │   └── processed/
 │       └── cicids2018_processed.csv   # 전처리 완료 (자동 생성)
 ├── src/
-│   ├── config.py        # 전역 설정 — UMAP 파라미터, 경로, 샘플링 수, 비교군 정의
+│   ├── config.py        # 전역 설정 — UMAP 파라미터, 경로, 샘플링 수, 데이터셋별 설정
 │   ├── data_loader.py   # 로드 + UDBB 샘플링 + 전처리 파이프라인
 │   ├── pre_filter.py    # ExtraTrees + ANOVA 평균 순위 기반 사전 필터링
 │   ├── evaluator.py     # UMAP 차원 축소 + Silhouette Score (cuML GPU)
@@ -163,11 +261,25 @@ CASS/
 │   ├── 01_eda_and_preprocessing.ipynb
 │   └── 02_silhouette_analysis.ipynb
 ├── results/             # 모든 출력 자동 저장 (gitignore 처리)
-│   ├── figures/
-│   ├── logs/
-│   └── exports/
+│   ├── cicids2018/      # CICIDS2018 실험 결과
+│   │   ├── figures/
+│   │   ├── logs/
+│   │   └── exports/
+│   └── unsw_nb15/       # UNSW-NB15 실험 결과
+│       ├── figures/
+│       ├── logs/
+│       └── exports/
 ├── main.py              # CLI 진입점
+├── make_test_exports.py # 로컬 test CSV 생성 스크립트 (대용량 파일 청크 처리)
 └── requirements.txt
+```
+
+UNSW-NB15 원본 데이터는 CASS 외부 공유 경로에서 참조합니다:
+
+```
+ai_lab/datasets/unsw-nb15/
+├── training-flow.csv    # UNSW-NB15 훈련 원본 (31 피처 + 레이블, 175k행)
+└── test-flow.csv        # UNSW-NB15 테스트 원본 (완전 분리 보관, 82k행)
 ```
 
 ---
@@ -186,42 +298,49 @@ pip install -r requirements.txt
 
 ### 2단계 — 데이터 준비
 
+**CICIDS2018**
 ```
 data/raw/training-flow.csv   # 컬럼: 피처 76개 + attack_flag + attack_step
 data/raw/test-flow.csv       # 동일 컬럼 구조
 ```
-
-`attack_flag`: 0 = benign, 1 = attack
 `attack_step`: `benign` · `action` · `infection` · `installation`
+
+**UNSW-NB15** (CASS 외부 공유 경로)
+```
+ai_lab/datasets/unsw-nb15/training-flow.csv   # 피처 31개 + attack_flag + attack_step
+ai_lab/datasets/unsw-nb15/test-flow.csv
+```
+`attack_step`: `benign` · `action` · `infection` · `reconnaissance`
+(`lateral-movement`, `installation` 제외 — 소수 샘플 및 PCA leakage 확인)
+
+`attack_flag`: 0 = benign, 1 = attack (공통)
 
 ### 3단계 — 파이프라인 실행
 
 목적에 따라 플래그를 조합합니다.
 
 ```bash
-# ── 기본 실행 (피처 선택만) ─────────────────────────────────
-python main.py
+# ── CICIDS2018 (기본값) ──────────────────────────────────────
+python main.py --pilot --export --analyze
+
+# ── UNSW-NB15 ───────────────────────────────────────────────
+python main.py --dataset unsw_nb15 --pilot --export --analyze
 
 # ── 탐색 방식 변경 ──────────────────────────────────────────
-python main.py --mode random --n-subsets 100   # 무작위 탐색
-python main.py --top-k 15                      # 후보 피처 15개로 축소
+python main.py --dataset unsw_nb15 --mode random --n-subsets 100
+python main.py --dataset unsw_nb15 --top-k 15
 
-# ── 신뢰도 검증 추가 ────────────────────────────────────────
-python main.py --pilot                         # Fast↔Full 상관 사전 확인
-
-# ── 논문 증명용 비교 데이터 생성 ────────────────────────────
-python main.py --export                        # 5개 비교군 train/test CSV
-python main.py --analyze                       # 8지표 히트맵 생성
-python main.py --export --analyze              # 두 가지 동시 실행
-
-# ── 권장 실행 (논문 전체 결과 재현) ─────────────────────────
-python main.py --pilot --export --analyze
+# ── 개별 플래그 ─────────────────────────────────────────────
+python main.py --dataset unsw_nb15 --pilot    # Fast↔Full 상관 사전 확인
+python main.py --dataset unsw_nb15 --export   # 비교군 train/test CSV
+python main.py --dataset unsw_nb15 --analyze  # 8지표 히트맵
 ```
 
 ### CLI 플래그 전체 목록
 
 | 플래그 | 기본값 | 설명 |
 |--------|--------|------|
+| `--dataset` | `cicids2018` | 데이터셋 선택 (`cicids2018` / `unsw_nb15`) |
 | `--mode` | `greedy` | 탐색 방식 (`greedy` / `random`) |
 | `--top-k` | `20` | Pre-filter 후 유지할 피처 수 |
 | `--n-subsets` | `80` | random 모드 평가 서브셋 수 |
@@ -231,26 +350,32 @@ python main.py --pilot --export --analyze
 
 ### 4단계 — 출력 결과 확인
 
+결과는 데이터셋별로 분리된 디렉토리에 저장됩니다.
+
 ```
 results/
-├── figures/
-│   ├── umap_best_subset.png            # CASS 최적 피처 UMAP 시각화
-│   ├── two_phase_screening.png         # Fast vs Full Silhouette 비교
-│   ├── pilot_fast_vs_full.png          # (--pilot) Pilot 검증 산점도
-│   ├── best_subset_umap_embeddings.csv # UMAP 임베딩 좌표 (umap_analysis 입력용)
-│   └── comparison_heatmap.png          # (--analyze) 비교군 × 8지표 히트맵
-├── logs/
-│   ├── pre_filter_ranking.csv          # 사전 필터링 전체 순위표
-│   ├── search_results_greedy.csv       # Greedy 탐색 단계별 결과
-│   ├── search_results_random.csv       # Random 탐색 결과
-│   ├── pilot_validation.csv            # (--pilot) Fast·Full Boundary_Mean 및 Silhouette 수치
-│   └── comparison_metrics.csv          # (--analyze) 비교군별 8지표 수치
-└── exports/                            # (--export) ML 학습용 CSV
-    ├── train_cass.csv / test_cass.csv               # CASS 선택 피처
-    ├── train_anova.csv / test_anova.csv             # ANOVA 상위 N개
-    ├── train_extratrees.csv / test_extratrees.csv   # ExtraTrees 상위 N개
-    ├── train_random.csv / test_random.csv           # 무작위 N개
-    └── train_lit_umar2024.csv / test_lit_umar2024.csv  # umar2024 12개
+├── cicids2018/          # --dataset cicids2018 결과
+│   ├── figures/
+│   │   ├── umap_best_subset.png            # CASS 최적 피처 UMAP 시각화
+│   │   ├── two_phase_screening.png         # Fast vs Full BM 비교
+│   │   ├── pilot_fast_vs_full.png          # (--pilot) Pilot 검증 산점도
+│   │   ├── best_subset_umap_embeddings.csv
+│   │   └── comparison_heatmap.png          # (--analyze) 비교군 × 8지표 히트맵
+│   ├── logs/
+│   │   ├── pre_filter_ranking.csv
+│   │   ├── search_results_greedy.csv
+│   │   ├── pilot_validation.csv
+│   │   └── comparison_metrics.csv
+│   └── exports/                            # (--export) ML 학습용 CSV
+│       ├── train_cass.csv / test_cass.csv
+│       ├── train_anova.csv / test_anova.csv
+│       ├── train_extratrees.csv / test_extratrees.csv
+│       ├── train_random.csv / test_random.csv
+│       └── train_lit_umar2024.csv / test_lit_umar2024.csv
+└── unsw_nb15/           # --dataset unsw_nb15 결과 (동일 구조)
+    ├── figures/
+    ├── logs/
+    └── exports/
 ```
 
 ---
@@ -534,12 +659,25 @@ Full(150)과의 임베딩 구조 간극을 줄이기 위해 n_neighbors=80, min_
 
 Uniform Distribution Based Balancing (Abdulhammed et al., 2019):
 
+**CICIDS2018**
+
 | 클래스 | 샘플 수 | 비율 |
 |--------|--------|------|
 | Benign | 60,000 | 50% |
 | Action (C2) | 20,000 | 17% |
 | Infection | 20,000 | 17% |
 | Installation | 20,000 | 17% |
+
+**UNSW-NB15**
+
+| 클래스 | 샘플 수 | 비율 |
+|--------|--------|------|
+| Benign | 30,000 | 50% |
+| Action | 10,000 | 17% |
+| Infection | 10,000 | 17% |
+| Reconnaissance | 10,000 | 17% |
+
+`lateral-movement`(2,000행)와 `installation`(1,746행)은 샘플 수 부족 및 탐색적 분석(PCA)에서 확인된 feature-level distributional overlap으로 인해 제외.
 
 ### 2단계 스크리닝 & Elbow 검출 & 최종 선택
 
@@ -642,12 +780,21 @@ cuML 설치: [https://docs.rapids.ai/install](https://docs.rapids.ai/install)
 피어슨 상관계수 히트맵으로 시각화합니다.
 **"Boundary_Mean이 높을수록(Camouflage가 낮을수록) ML 성능도 높다"** 는 상관관계를 수치로 증명합니다.
 
-### 2. 다중 데이터셋 일반화 검증
+### 2. UNSW-NB15 Literature Baseline 추가
 
-- **LSPR23** — IoT 환경 공격 트래픽
-- **UNSW-NB15** — 다양한 공격 유형
-- **CICIoT2023** — 최신 IoT 공격 패턴
-- **TON-IoT** — IoT/IIoT 다중 환경
+`src/config.py`의 `UNSW_LITERATURE_BASELINES`에 인용수 높은 UNSW-NB15 피처 선택 논문의
+피처 조합을 추가하면 자동으로 비교군에 포함됩니다.
+
+```python
+UNSW_LITERATURE_BASELINES = {
+    "author_year": ["feature_a", "feature_b", ...],
+}
+```
+
+### 3. make_test_exports.py UNSW-NB15 지원
+
+현재 `make_test_exports.py`는 CICIDS2018 전용입니다.
+UNSW-NB15 test CSV 로컬 생성이 필요할 경우 `--dataset` 플래그 지원 추가 예정.
 
 ---
 
@@ -660,3 +807,4 @@ cuML 설치: [https://docs.rapids.ai/install](https://docs.rapids.ai/install)
 - McInnes et al. (2018) — UMAP 원논문
 - CICIDS2018 — Canadian Institute for Cybersecurity
 - Cohen, J. (1988). *Statistical Power Analysis for the Behavioral Sciences* (2nd ed.). — `PILOT_MIN_SPEARMAN = 0.7` (strong correlation, R² ≥ 0.49) 기준
+- Aditya Kuppa, Slawomir Grzonkowski, Muhammad Rizwan Asghar, and Nhien-An Le-Khac. 2019. "Black box attacks on deep anomaly detectors." In *Proc. of ARES*. 21:1–21:10. - Silhouette 낮은 절댓값 방어

@@ -42,6 +42,7 @@ venv.bak/
 
 # ── 결과물 (figures는 선택적으로 포함 가능) ──────────────────────
 results/logs/
+results/exports/
 # results/figures/
 
 # ── IDE ──────────────────────────────────────────────────────────

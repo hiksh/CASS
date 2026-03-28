@@ -10,9 +10,11 @@ DATA_DIR      = BASE_DIR / "data"
 RAW_DIR       = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 RESULTS_DIR   = BASE_DIR / "results"
-FIGURES_DIR   = RESULTS_DIR / "figures"
-LOGS_DIR      = RESULTS_DIR / "logs"
-EXPORTS_DIR   = RESULTS_DIR / "exports"
+
+# CICIDS2018 결과 디렉토리 (기본 / 하위 호환)
+FIGURES_DIR   = RESULTS_DIR / "cicids2018" / "figures"
+LOGS_DIR      = RESULTS_DIR / "cicids2018" / "logs"
+EXPORTS_DIR   = RESULTS_DIR / "cicids2018" / "exports"
 
 TRAIN_FILE = RAW_DIR / "training-flow.csv"
 TEST_FILE  = RAW_DIR / "test-flow.csv"
@@ -169,3 +171,125 @@ LITERATURE_BASELINES = {
         "idle max",
     ],
 }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# UNSW-NB15 데이터셋 설정
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_UNSW_DIR = BASE_DIR.parent / "datasets" / "unsw-nb15"
+
+UNSW_TRAIN_FILE = _UNSW_DIR / "training-flow.csv"
+UNSW_TEST_FILE  = _UNSW_DIR / "test-flow.csv"
+
+UNSW_RESULTS_DIR = RESULTS_DIR / "unsw_nb15"
+UNSW_FIGURES_DIR = UNSW_RESULTS_DIR / "figures"
+UNSW_LOGS_DIR    = UNSW_RESULTS_DIR / "logs"
+UNSW_EXPORTS_DIR = UNSW_RESULTS_DIR / "exports"
+
+# 수치형 피처 31개 (protocol, service, state 범주형 제외)
+UNSW_ALL_FEATURES = [
+    "dur",
+    "spkts",        "dpkts",
+    "sbytes",       "dbytes",
+    "rate",
+    "sload",        "dload",
+    "sloss",        "dloss",
+    "sinpkt",       "dinpkt",
+    "sjit",         "djit",
+    "swin",         "stcpb",        "dtcpb",        "dwin",
+    "tcprtt",       "synack",       "ackdat",
+    "smean",        "dmean",
+    "trans_depth",  "response_body_len",
+    "ct_src_dport_ltm", "ct_dst_sport_ltm",
+    "is_ftp_login", "ct_ftp_cmd",   "ct_flw_http_mthd", "is_sm_ips_ports",
+]
+
+# log1p 적용 피처 (right-skewed, non-negative 연속형)
+UNSW_LOG_FEATURES = [
+    "dur",
+    "spkts",        "dpkts",
+    "sbytes",       "dbytes",
+    "rate",
+    "sload",        "dload",
+    "sinpkt",       "dinpkt",
+    "sjit",         "djit",
+    "swin",         "stcpb",        "dtcpb",        "dwin",
+    "tcprtt",       "synack",       "ackdat",
+    "smean",        "dmean",
+    "trans_depth",  "response_body_len",
+    "ct_src_dport_ltm", "ct_dst_sport_ltm",
+]
+
+# UDBB 샘플링: lateral-movement, installation 제외 (소수 + PCA leakage)
+UNSW_UDBB_COUNTS = {
+    "benign":         30_000,
+    "reconnaissance": 10_000,
+    "action":         10_000,
+    "infection":      10_000,
+}
+
+# Kill Chain 단계 색상 (시각화용)
+UNSW_STEP_COLORS = {
+    "benign":         "#3498DB",
+    "action":         "#E74C3C",
+    "infection":      "#F39C12",
+    "reconnaissance": "#9B59B6",
+}
+
+# Literature baseline — 인용수 높은 UNSW-NB15 피처 선택 논문 추가 예정
+# TODO: 논문 확인 후 피처 리스트 채울 것
+UNSW_LITERATURE_BASELINES = {
+    # "author_year": ["feature_a", "feature_b", ...],
+}
+
+
+# ── 데이터셋 설정 통합 접근자 ────────────────────────────────────────────────
+
+def get_dataset_config(name: str) -> dict:
+    """
+    데이터셋 이름으로 설정 딕셔너리를 반환합니다.
+
+    Args:
+        name: "cicids2018" 또는 "unsw_nb15"
+
+    Returns:
+        {train_file, test_file, all_features, log_features, udbb_counts,
+         literature_baselines, step_colors,
+         figures_dir, logs_dir, exports_dir}
+    """
+    if name == "cicids2018":
+        return dict(
+            name                 = "cicids2018",
+            train_file           = TRAIN_FILE,
+            test_file            = TEST_FILE,
+            all_features         = ALL_FEATURES,
+            log_features         = LOG_FEATURES,
+            udbb_counts          = UDBB_COUNTS,
+            literature_baselines = LITERATURE_BASELINES,
+            step_colors          = {
+                "benign":       "#3498DB",
+                "action":       "#E74C3C",
+                "infection":    "#F39C12",
+                "installation": "#2ECC71",
+            },
+            figures_dir          = FIGURES_DIR,
+            logs_dir             = LOGS_DIR,
+            exports_dir          = EXPORTS_DIR,
+        )
+    elif name == "unsw_nb15":
+        return dict(
+            name                 = "unsw_nb15",
+            train_file           = UNSW_TRAIN_FILE,
+            test_file            = UNSW_TEST_FILE,
+            all_features         = UNSW_ALL_FEATURES,
+            log_features         = UNSW_LOG_FEATURES,
+            udbb_counts          = UNSW_UDBB_COUNTS,
+            literature_baselines = UNSW_LITERATURE_BASELINES,
+            step_colors          = UNSW_STEP_COLORS,
+            figures_dir          = UNSW_FIGURES_DIR,
+            logs_dir             = UNSW_LOGS_DIR,
+            exports_dir          = UNSW_EXPORTS_DIR,
+        )
+    else:
+        raise ValueError(f"알 수 없는 데이터셋: {name!r}. 'cicids2018' 또는 'unsw_nb15' 중 선택하세요.")

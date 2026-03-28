@@ -21,9 +21,10 @@ from scipy.stats import spearmanr
 from cuml.manifold import UMAP
 
 from src.config import (
-    FIGURES_DIR, LOGS_DIR, UMAP_PARAMS, UMAP_PARAMS_FAST,
+    UMAP_PARAMS, UMAP_PARAMS_FAST,
     RANDOM_SEED, SEARCH_MODE,
-    PILOT_MIN_SPEARMAN,
+    PILOT_MIN_SPEARMAN, N_RANDOM_BASELINE,
+    get_dataset_config,
 )
 from src.data_loader import load_dataset
 from src.pre_filter import pre_filter
@@ -32,7 +33,6 @@ from src.search_algo import (
 )
 from src.exporter import export_comparison_sets, build_comparison_groups
 from src.analyzer import analyze_comparison_groups, plot_comparison_heatmap
-from src.config import N_RANDOM_BASELINE
 
 
 # ── 로그 헬퍼 ────────────────────────────────────────────────────────────────
@@ -58,6 +58,7 @@ def plot_umap_best(
     best_features: list,
     all_feature_names: list,
     save_path,
+    step_colors: dict = None,
 ) -> None:
     """최적 피처 부분집합의 UMAP 시각화 (이진 + Kill Chain)."""
     feat_list = list(all_feature_names)
@@ -68,7 +69,7 @@ def plot_umap_best(
     reducer = UMAP(**UMAP_PARAMS)
     emb = np.asarray(reducer.fit_transform(X_sub))
 
-    STEP_COLORS = {
+    STEP_COLORS = step_colors or {
         "benign":       "#3498DB",
         "action":       "#E74C3C",
         "infection":    "#F39C12",
@@ -231,6 +232,12 @@ def plot_two_phase(
 # ── 메인 파이프라인 ──────────────────────────────────────────────────────────
 
 def main(args) -> None:
+    # ── 데이터셋 설정 로드 ───────────────────────────────────────────────────
+    ds = get_dataset_config(args.dataset)
+    FIGURES_DIR = ds["figures_dir"]
+    LOGS_DIR    = ds["logs_dir"]
+    EXPORTS_DIR = ds["exports_dir"]
+
     for d in [FIGURES_DIR, LOGS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
 
@@ -239,6 +246,7 @@ def main(args) -> None:
     print(_SEP)
     print("CASS — Cluster-Aware Feature Selection System")
     print(_SEP2)
+    print(f"  Dataset  : {args.dataset}")
     print(f"  Mode     : {args.mode}")
     print(f"  Top-K    : {args.top_k}")
     print(f"  Pilot    : {'ON' if args.pilot else 'OFF'}")
@@ -250,7 +258,11 @@ def main(args) -> None:
     # ── 1. 데이터 로드 & 전처리 ─────────────────────────────────────────────
     _header(f"[1/{total_stages}]", "데이터 로드 및 전처리")
     X_scaled, y, attack_step, feature_names, scaler, df = load_dataset(
-        use_udbb=True, save_processed=True,
+        csv_path=ds["train_file"],
+        use_udbb=True,
+        save_processed=(args.dataset == "cicids2018"),
+        all_features=ds["all_features"],
+        udbb_counts=ds["udbb_counts"],
     )
     n_benign = int(np.sum(y == 0))
     n_attack = int(np.sum(y == 1))
@@ -258,8 +270,11 @@ def main(args) -> None:
     _sub(f"피처 수    : {len(feature_names)}")
     _sub(f"Benign     : {n_benign:,}  ({n_benign/len(y)*100:.1f}%)")
     _sub(f"Attack     : {n_attack:,}  ({n_attack/len(y)*100:.1f}%)")
-    attack_steps = {s: int((attack_step == s).sum()) for s in ["action","infection","installation"]}
-    for step, cnt in attack_steps.items():
+    attack_steps_summary = {
+        s: int((attack_step == s).sum())
+        for s in ds["udbb_counts"] if s != "benign"
+    }
+    for step, cnt in attack_steps_summary.items():
         _sub(f"  └ {step:<14}: {cnt:,}")
 
     # ── 2. Pre-filter ────────────────────────────────────────────────────────
@@ -284,25 +299,29 @@ def main(args) -> None:
             _sub(f"[경고] 최대 재시도 후에도 Spearman r={spearman_r:.4f} < {PILOT_MIN_SPEARMAN}")
             _sub("Fast 스크리닝 신뢰도가 낮을 수 있습니다. 결과 해석에 주의하세요.")
 
-    # ── 2.7 Reference Camouflage 참고값 계산 (umar2024, 비교용) ─────────────
-    from src.config import LITERATURE_BASELINES
-    _header(f"[2.7/{total_stages}]", "Reference Camouflage 참고값 계산 (umar2024, 비교용)")
-    ref_features = [f for f in LITERATURE_BASELINES.get("umar2024", [])
-                    if f in list(feature_names)]
+    # ── 2.7 Reference Camouflage 참고값 계산 (literature baseline, 비교용) ──
+    lit_baselines = ds["literature_baselines"]
+    ref_name      = next(iter(lit_baselines), None)   # 첫 번째 baseline 사용
     ref_embedding = None
-    if ref_features:
-        ref_cam, ref_embedding = compute_reference_camouflage(
-            X_scaled, y, feature_names, ref_features
-        )
-        _sub(f"umar2024 Camouflage 참고값 : {ref_cam:.4f}  (비교 기준, 제약으로 사용되지 않음)")
-        pd.DataFrame([{
-            "reference":  "umar2024",
-            "n_features": len(ref_features),
-            "ref_cam":    ref_cam,
-        }]).to_csv(LOGS_DIR / "reference_camouflage.csv", index=False)
-        _sub(f"참고값 저장: {LOGS_DIR / 'reference_camouflage.csv'}")
+
+    if ref_name:
+        _header(f"[2.7/{total_stages}]", f"Reference Camouflage 참고값 계산 ({ref_name}, 비교용)")
+        ref_features = [f for f in lit_baselines[ref_name] if f in list(feature_names)]
+        if ref_features:
+            ref_cam, ref_embedding = compute_reference_camouflage(
+                X_scaled, y, feature_names, ref_features
+            )
+            _sub(f"{ref_name} Camouflage 참고값 : {ref_cam:.4f}  (비교 기준, 제약으로 사용되지 않음)")
+            pd.DataFrame([{
+                "reference":  ref_name,
+                "n_features": len(ref_features),
+                "ref_cam":    ref_cam,
+            }]).to_csv(LOGS_DIR / "reference_camouflage.csv", index=False)
+            _sub(f"참고값 저장: {LOGS_DIR / 'reference_camouflage.csv'}")
+        else:
+            _sub(f"[경고] {ref_name} 피처가 데이터셋에 없습니다.")
     else:
-        _sub("[경고] umar2024 피처가 데이터셋에 없습니다.")
+        _header(f"[2.7/{total_stages}]", "Reference Camouflage — literature baseline 없음, skip")
 
     # ── 3. 2단계 스크리닝 탐색 ──────────────────────────────────────────────
     _header(f"[3/{total_stages}]", f"2단계 스크리닝  (mode={args.mode})")
@@ -333,13 +352,15 @@ def main(args) -> None:
         plot_umap_best(
             X_scaled, y, attack_step, best_subset, feature_names,
             FIGURES_DIR / "umap_best_subset.png",
+            step_colors=ds["step_colors"],
         )
 
     # ── 공유 비교군 (export / analyze 양쪽에서 사용) ─────────────────────────
     groups = None
     if (args.export or args.analyze) and best_subset:
         groups = build_comparison_groups(
-            best_subset, filter_summary, feature_names, N_RANDOM_BASELINE
+            best_subset, filter_summary, feature_names, N_RANDOM_BASELINE,
+            literature_baselines=lit_baselines,
         )
 
     # ── 5. [선택] Export ─────────────────────────────────────────────────────
@@ -352,6 +373,8 @@ def main(args) -> None:
             export_comparison_sets(
                 X_scaled, y, attack_step, feature_names,
                 best_subset, filter_summary, scaler,
+                export_dir=EXPORTS_DIR,
+                test_file=ds["test_file"],
             )
         stage += 1
 
@@ -361,12 +384,13 @@ def main(args) -> None:
             print(f"\n[{stage}/{total_stages}] [경고] 최적 부분집합이 없어 Analyze를 건너뜁니다.")
         else:
             _header(f"[{stage}/{total_stages}]", "UMAP 수치 분석 및 히트맵")
-            precomputed_embeddings = (
-                {"lit_umar2024": ref_embedding} if ref_embedding is not None else {}
-            )
+            precomputed_embeddings = {}
+            if ref_embedding is not None and ref_name:
+                precomputed_embeddings[f"lit_{ref_name}"] = ref_embedding
             metrics_df = analyze_comparison_groups(
                 groups, X_scaled, y, feature_names,
                 precomputed_embeddings=precomputed_embeddings,
+                logs_dir=LOGS_DIR,
             )
             if not metrics_df.empty:
                 plot_comparison_heatmap(
@@ -395,7 +419,6 @@ def main(args) -> None:
     _sub(f"로그 저장 위치    : {LOGS_DIR}")
     _sub(f"시각화 저장 위치  : {FIGURES_DIR}")
     if args.export:
-        from src.config import EXPORTS_DIR
         _sub(f"Export 저장 위치  : {EXPORTS_DIR}")
     if args.analyze:
         _sub(f"히트맵 저장 위치  : {FIGURES_DIR / 'comparison_heatmap.png'}")
@@ -408,6 +431,10 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="CASS — Cluster-Aware Feature Selection System",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--dataset", choices=["cicids2018", "unsw_nb15"], default="cicids2018",
+        help="사용할 데이터셋",
     )
     parser.add_argument(
         "--mode", choices=["greedy", "random"], default=SEARCH_MODE,

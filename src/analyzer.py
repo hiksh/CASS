@@ -23,7 +23,7 @@ from sklearn.metrics import silhouette_score
 from scipy.spatial.distance import cdist
 
 from .config import (
-    UMAP_PARAMS, RANDOM_SEED, LOGS_DIR, FIGURES_DIR,
+    UMAP_PARAMS, RANDOM_SEED, LOGS_DIR,
     HDBSCAN_MIN_CLUSTER_SIZE, HDBSCAN_MIN_SAMPLES,
     CAMOUFLAGE_THRESHOLDS, MAX_CDIST_SAMPLE,
 )
@@ -141,6 +141,7 @@ def analyze_comparison_groups(
     y: np.ndarray,
     feature_names: list,
     precomputed_embeddings: dict = None,
+    logs_dir=None,
 ) -> pd.DataFrame:
     """
     비교군별 Full UMAP 실행 → 8개 지표 계산.
@@ -220,7 +221,8 @@ def analyze_comparison_groups(
     print(metrics_df[display_cols].to_string())
 
     # CSV 저장
-    csv_path = LOGS_DIR / "comparison_metrics.csv"
+    save_dir = logs_dir if logs_dir is not None else LOGS_DIR
+    csv_path = save_dir / "comparison_metrics.csv"
     metrics_df.to_csv(csv_path)
     print(f"\n  지표 CSV 저장: {csv_path}")
 
