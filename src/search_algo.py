@@ -286,14 +286,17 @@ def _full_reeval(
     (동일 임베딩 재사용 — UMAP 추가 실행 없음)
 
     Returns:
-        full_df: 상위 K개에 full_sil / boundary_mean / camouflage 컬럼이 채워진 DataFrame
+        result_df: fast_df 전체 행을 원본 순서(greedy: step 순)로 유지하되,
+                   상위 K개에만 full_sil / boundary_mean / camouflage 가 채워진 DataFrame.
+                   나머지 행은 NaN.
     """
     sort_col    = "fast_bm"
-    sorted_df   = fast_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
+    sorted_df   = fast_df.sort_values(sort_col, ascending=False)   # 원본 인덱스 유지
     scores_desc = sorted_df[sort_col].values
 
-    K      = find_elbow(scores_desc)
-    top_df = sorted_df.head(K).copy()
+    K        = find_elbow(scores_desc)
+    top_rows = sorted_df.head(K)                                   # 원본 인덱스 보존
+    top_indices = top_rows.index.tolist()
 
     print(f"\n  [Elbow] Fast BM 분포: max={scores_desc[0]:.4f}  min={scores_desc[-1]:.4f}")
     print(f"  [Elbow] K = {K}  (전체 {len(sorted_df)}개 중 상위 {K}개 Full 재평가)")
@@ -301,9 +304,9 @@ def _full_reeval(
 
     full_sils, boundary_means, camouflages = [], [], []
 
-    for i, row in top_df.iterrows():
+    for i, (_, row) in enumerate(top_rows.iterrows()):
         feats = row["features"]
-        n     = len(full_sils) + 1
+        n     = i + 1
         try:
             sil, bm, cam, _ = evaluate_subset_full_metrics(
                 X_scaled, y, all_feature_names, feats
@@ -322,10 +325,15 @@ def _full_reeval(
             camouflages.append(float("nan"))
             print(f"    [{n:>2}/{K}] 오류: {e}")
 
-    top_df["full_sil"]      = full_sils
-    top_df["boundary_mean"] = boundary_means
-    top_df["camouflage"]    = camouflages
-    return top_df
+    # fast_df 전체를 기반으로 결과 병합 — 원본 순서(greedy: step 순) 유지
+    result_df = fast_df.copy()
+    result_df["full_sil"]      = np.nan
+    result_df["boundary_mean"] = np.nan
+    result_df["camouflage"]    = np.nan
+    result_df.loc[top_indices, "full_sil"]      = full_sils
+    result_df.loc[top_indices, "boundary_mean"] = boundary_means
+    result_df.loc[top_indices, "camouflage"]    = camouflages
+    return result_df
 
 
 # ── Reference Camouflage 계산 ─────────────────────────────────────────────────
@@ -335,6 +343,7 @@ def compute_reference_camouflage(
     y: np.ndarray,
     all_feature_names: list,
     ref_features: list,
+    ref_name: str = "reference",
 ) -> float:
     """
     Reference 피처 조합(umar2024 등)에 대해 Full UMAP을 실행하고
@@ -342,6 +351,7 @@ def compute_reference_camouflage(
 
     Args:
         ref_features: LITERATURE_BASELINES의 피처 목록
+        ref_name    : 로그 출력에 사용할 baseline 이름
 
     Returns:
         cam_threshold: float — Camouflage@t (첫 번째 임계값 기준)
@@ -349,14 +359,14 @@ def compute_reference_camouflage(
     from .config import CAMOUFLAGE_THRESHOLDS
     t = CAMOUFLAGE_THRESHOLDS[0]
     print(
-        f"\n[Reference] umar2024 Camouflage@{t} 기준값 계산 중 "
+        f"\n[Reference] {ref_name} Camouflage@{t} 기준값 계산 중 "
         f"({len(ref_features)}개 피처) ..."
     )
     _, _, cam, emb = evaluate_subset_full_metrics(
         X_scaled, y, all_feature_names, ref_features
     )
     cam_val = cam.get(t, list(cam.values())[0])
-    print(f"  → Camouflage@{t} (umar2024) = {cam_val:.4f}  ← 제약 임계값으로 사용")
+    print(f"  → Camouflage@{t} ({ref_name}) = {cam_val:.4f}  ← 참고값 (제약으로 사용되지 않음)")
     return float(cam_val), emb
 
 

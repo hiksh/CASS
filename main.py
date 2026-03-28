@@ -310,7 +310,7 @@ def main(args) -> None:
         ref_features = [f for f in lit_baselines[ref_name] if f in list(feature_names)]
         if ref_features:
             ref_cam, ref_embedding = compute_reference_camouflage(
-                X_scaled, y, feature_names, ref_features
+                X_scaled, y, feature_names, ref_features, ref_name=ref_name
             )
             _sub(f"{ref_name} Camouflage 참고값 : {ref_cam:.4f}  (비교 기준, 제약으로 사용되지 않음)")
             pd.DataFrame([{
