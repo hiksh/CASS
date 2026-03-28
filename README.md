@@ -10,12 +10,18 @@
 
 ### 핵심 가설
 
-> **"저차원 매니폴드 공간(UMAP)에서 클러스터 분리도(Silhouette Score)가 높은 피처 조합은,
-> 특정 학습 모델에 대한 편향 없이 다양한 ML 탐지 모델에서 높은 성능을 제공한다."**
+> **"저차원 매니폴드 공간(UMAP)에서 공격 트래픽이 정상 트래픽으로 위장하기 어려운(Boundary_Mean 최대화)
+> 피처 조합은, 특정 학습 모델에 대한 편향 없이 다양한 ML 탐지 모델에서 높은 성능을 제공한다."**
 
 전통적인 피처 선택(RF 중요도, ANOVA 등)은 특정 모델의 손실 함수나 분포 가정에 의존합니다.
-CASS는 **UMAP의 위상적 클러스터 구조**만을 평가 기준으로 삼아 어떤 ML 모델에도 bias 없이
-일반화되는 피처 부분집합을 탐색합니다.
+CASS는 **UMAP 공간에서의 Camouflage 최소화(Boundary_Mean 최대화)** 를 평가 기준으로 삼아
+어떤 ML 모델에도 bias 없이 일반화되는 피처 부분집합을 탐색합니다.
+
+**목적함수 선택 근거:**
+- Silhouette 최대화는 공격 클러스터가 benign 근처에서 "잘 분리된 채로" 위장하는 상황을 허용함
+- Boundary_Mean(공격 → nearest benign 평균 거리) 최대화는 위장 자체를 직접 억제함
+- 기존 문헌에서 UMAP Camouflage를 피처 선택의 **목적함수**로 사용한 선행 연구 없음 → 새로운 기여
+- Silhouette > 0 제약(최소 분리도 보장)으로 클러스터 파편화 방지
 
 ---
 
@@ -41,25 +47,27 @@ data/raw/training-flow.csv
          │            Spearman r ≥ 0.7 이면 Fast가 유효한 proxy
          │
          ▼
-[Stage 2.7] Reference Camouflage 기준값 계산
+[Stage 2.7] Reference Camouflage 참고값 계산 (비교용)
             umar2024 피처 조합으로 Full UMAP 실행
-            → Camouflage@1.0 실측값 추출 → 제약 임계값(θ)으로 저장
+            → Camouflage@1.0 실측값 → 비교 참고값으로 저장 (제약으로 사용 안 함)
          │
          ▼
 [Stage 4] 2단계 스크리닝 탐색
           ┌─ 1단계: Fast UMAP (n_neighbors=30) 으로 전체 후보 평가
+          │         목적함수: Boundary_Mean 최대화 (silhouette > 0 제약)
           │         --mode greedy  : 전진 선택 (피처 1개씩 추가)
           │         --mode random  : 무작위 서브셋 N개 샘플링
           │
-          ├─ Elbow 검출: fast_sil 내림차순 gap → 상위 K 결정
+          ├─ Elbow 검출: fast_bm 내림차순 gap → 상위 K 결정
           │
           └─ 2단계: Full UMAP (n_neighbors=150) 으로 상위 K 재평가
                     각 서브셋마다 full_sil + boundary_mean + camouflage 계산
                     (동일 임베딩 재사용 — k-NN 1회 추가)
                     │
-                    └─ 제약 기반 최종 선택
-                         camouflage ≤ θ(umar2024) 를 만족하는 후보 중
-                         full_sil 최댓값 → best_features 확정
+                    └─ 최종 선택
+                         silhouette > 0 을 만족하는 후보 중
+                         boundary_mean 최댓값 → best_features 확정
+                         (만족 후보 없으면 제약 완화 → 전체 대상 boundary_mean 최댓값)
          │
          ▼
 [Stage 5] 시각화 & 저장
@@ -87,7 +95,7 @@ data/raw/training-flow.csv
 
 | 비교군 | 선택 기준 | 피처 수 | 모델 편향 |
 |--------|-----------|---------|-----------|
-| `cass` | UMAP Silhouette 최적화 | N (자동) | 없음 ← **제안 방법** |
+| `cass` | UMAP Boundary_Mean 최대화 (silhouette > 0 제약) | N (자동) | 없음 ← **제안 방법** |
 | `anova` | ANOVA F-score 상위 N개 | N | 선형 분리도 가정 |
 | `extratrees` | ExtraTrees 중요도 상위 N개 | N | 트리 구조 편향 |
 | `random` | 무작위 N개 | N | — (하한 기준선) |
@@ -292,54 +300,61 @@ avg_rank(f) = ( r_tree(f) + r_anova(f) ) / 2
 
 ---
 
-### 제약 기반 최적 서브셋 선택 (Constraint-based Selection)
+### 최적 서브셋 선택 (Boundary_Mean Maximization)
 
-CASS의 핵심 기여는 **"UMAP 클러스터 분리도가 높은 피처 조합이 ML 탐지 성능도 높다"** 는 주장입니다. 그런데 Silhouette Score만 최적화하면 경계면 근방의 **위장 공격(Camouflage)** 이 묵인될 수 있습니다. 이를 방지하기 위해 umar2024 실측값을 **외부 안전 기준선** 으로 사용합니다.
+CASS의 핵심 기여는 **"UMAP 공간에서 Camouflage가 낮은(Boundary_Mean이 높은) 피처 조합이 ML 탐지 성능도 높다"** 는 주장입니다. Boundary_Mean을 직접 목적함수로 삼아 공격 트래픽의 위장을 억제하는 피처 조합을 탐색합니다.
 
 #### 선택 절차
 
 ```
-Step 1 — Reference 기준값 계산
-  umar2024 피처 12개로 Full UMAP 실행
-  → Camouflage@1.0 실측값 추출 → θ (임계값)으로 고정
+Step 1 — 1단계 Fast 스크리닝
+  각 후보 서브셋에 Fast UMAP 적용
+  → silhouette > MIN_SILHOUETTE(0.0) 를 만족하는 경우에만
+    Boundary_Mean 계산 → 최댓값 기준으로 탐색 방향 결정
+  (제약 미충족 시 silhouette 제약 완화 후 Boundary_Mean으로 fallback)
 
-Step 2 — 제약 적용 (Top-K Full 재평가 후)
-  survived = { subset : camouflage(subset) ≤ θ }
+Step 2 — Elbow 검출
+  fast_bm 내림차순 gap 분석 → 상위 K 결정
 
-Step 3 — 최종 선택
-  best = argmax full_sil  over survived
+Step 3 — 2단계 Full 재평가
+  상위 K개에 Full UMAP 적용
+  → full_sil + boundary_mean + camouflage 동시 계산
+
+Step 4 — 최종 선택
+  survived = { subset : full_sil > MIN_SILHOUETTE }
+  best = argmax boundary_mean  over survived
   (survived 가 공집합이면 제약 완화 → 전체 Top-K 대상 argmax로 fallback)
 ```
 
 #### 수식
 
 ```
-θ = Camouflage@1.0( UMAP_full( X[umar2024_features] ) )
-
-best_features = argmax  Silhouette(UMAP_full(X[S]))
+best_features = argmax  Boundary_Mean(UMAP_full(X[S]))
                 S ∈ TopK
-                subject to  Camouflage@1.0(UMAP_full(X[S])) ≤ θ
+                subject to  Silhouette(UMAP_full(X[S])) > MIN_SILHOUETTE(0.0)
 ```
 
 #### 논문 방어 논리
 
-> *"We select the feature subset that maximizes UMAP Silhouette Score among candidates
-> whose camouflage rate does not exceed that of the Umar et al. (2024) baseline, ensuring
-> that boundary-level attack concealment is at least as well-controlled as the
-> domain-expert-defined reference."*
+> *"We select the feature subset that maximizes the mean distance from attack points
+> to their nearest benign neighbor in UMAP space (Boundary_Mean), subject to a minimum
+> separability constraint (Silhouette > 0). This directly minimizes the camouflage rate
+> without relying on any externally tuned threshold, as Silhouette > 0 is a
+> model-free, parameter-free condition meaning attack clusters are closer to each other
+> than to benign clusters."*
 
-- **임계값 근거**: 데이터에서 튜닝한 값이 아니라 **기존 논문(umar2024)의 실측값** 이므로 리뷰어의 "threshold를 왜 이 값으로 정했는가?" 질문에 객관적 근거 제시 가능
-- **주 목적 함수 유지**: Primary objective 는 여전히 Silhouette → CASS의 핵심 기여인 "UMAP 클러스터 구조 기반 선택"이 훼손되지 않음
-- **단방향 안전망**: Silhouette ↔ Camouflage 간 트레이드오프가 발생할 때, Camouflage가 umar2024보다 나쁜 조합만 제거
+- **하이퍼파라미터 없음**: Boundary_Mean은 직접 최대화, Silhouette > 0은 고정된 수학적 조건 (튜닝 불필요)
+- **선행 연구와의 차별점**: 기존 연구는 camouflage를 측정 지표로만 활용; CASS는 이를 **탐색 목적함수**로 직접 사용
+- **파편화 방지**: Silhouette > 0 제약으로 extratrees의 Cluster_Count=306 같은 과도한 파편화 억제
 
 ---
 
 ### Elbow 검출 알고리즘
 
-`search_algo.py`의 `find_elbow()` 함수입니다. Fast Silhouette 점수의 내림차순 정렬 후 다음 조건으로 Elbow K를 결정합니다.
+`search_algo.py`의 `find_elbow()` 함수입니다. Fast Boundary_Mean 점수의 내림차순 정렬 후 다음 조건으로 Elbow K를 결정합니다.
 
 ```
-scores_desc = [s_1 ≥ s_2 ≥ ... ≥ s_n]  (Fast Silhouette 내림차순)
+scores_desc = [s_1 ≥ s_2 ≥ ... ≥ s_n]  (Fast Boundary_Mean 내림차순)
 
 gaps[i] = |s_i - s_{i+1}|               (인접 점수 차이, i = 1..n-1)
 max_gap  = max(gaps)
@@ -350,7 +365,7 @@ K = max(K, ELBOW_MIN_K)                 (최소 3 보장)
 K = n  if 조건 미발생                   (모두 Full 재평가)
 ```
 
-**직관:** 점수가 급격히 떨어지기 시작하는 "절벽" 직전 지점을 Elbow로 보고, 그 위의 서브셋만 Full UMAP으로 재평가합니다.
+**직관:** Boundary_Mean 점수가 급격히 떨어지기 시작하는 "절벽" 직전 지점을 Elbow로 보고, 그 위의 서브셋만 Full UMAP으로 재평가합니다.
 
 ---
 
@@ -503,15 +518,15 @@ Uniform Distribution Based Balancing (Abdulhammed et al., 2019):
 | Infection | 20,000 | 17% |
 | Installation | 20,000 | 17% |
 
-### 2단계 스크리닝 & Elbow 검출 & 제약 기반 선택
+### 2단계 스크리닝 & Elbow 검출 & 최종 선택
 
 UMAP 연산 비용 절감을 위해 2단계 구조를 사용합니다.
 
-1. **Reference 기준값**: umar2024 피처로 Full UMAP 실행 → Camouflage@1.0 임계값 θ 확정
-2. **1단계 (Fast)**: 전체 후보 조합을 빠르게 평가 (Silhouette만)
-3. **Elbow 검출**: 내림차순 fast_sil에서 gap < `max_gap × ELBOW_GAP_RATIO` 인 지점 → 상위 K 결정
+1. **Reference 참고값**: umar2024 피처로 Full UMAP 실행 → Camouflage@1.0 실측값 저장 (비교용, 제약 아님)
+2. **1단계 (Fast)**: 전체 후보 조합을 빠르게 평가 → Boundary_Mean 계산 (silhouette > 0 제약)
+3. **Elbow 검출**: 내림차순 fast_bm에서 gap < `max_gap × ELBOW_GAP_RATIO` 인 지점 → 상위 K 결정
 4. **2단계 (Full)**: 상위 K개에 대해서만 논문 파라미터로 재평가 → Silhouette + Boundary_Mean + Camouflage 동시 계산 (동일 임베딩 재사용)
-5. **제약 기반 선택**: `camouflage ≤ θ` 를 만족하는 후보 중 Silhouette 최댓값 선택
+5. **최종 선택**: `silhouette > MIN_SILHOUETTE` 를 만족하는 후보 중 Boundary_Mean 최댓값 선택
 
 ### Train / Test 분리
 
@@ -533,6 +548,7 @@ UMAP이 훈련 데이터만 보므로 **test leakage 없음**.
 | `N_RANDOM_SUBSETS` | 80 | Random 모드 평가 서브셋 수 |
 | `MIN_SUBSET_SIZE` | 3 | 서브셋 최소 크기 |
 | `MAX_SUBSET_SIZE` | 15 | 서브셋 최대 크기 |
+| `MIN_SILHOUETTE` | 0.0 | Silhouette 하한 제약 (이 값 초과해야 후보 인정) |
 | `ELBOW_GAP_RATIO` | 0.1 | Elbow 판정 임계 비율 |
 | `ELBOW_MIN_K` | 3 | 2단계 재평가 최소 K |
 
@@ -599,7 +615,7 @@ cuML 설치: [https://docs.rapids.ai/install](https://docs.rapids.ai/install)
 
 비교군별 8개 UMAP 지표 + 다수 ML 모델 성능(F1/Precision/Recall/Accuracy)을 수집하여
 피어슨 상관계수 히트맵으로 시각화합니다.
-**"Silhouette가 높을수록 ML 성능도 높다"** 는 상관관계를 수치로 증명합니다.
+**"Boundary_Mean이 높을수록(Camouflage가 낮을수록) ML 성능도 높다"** 는 상관관계를 수치로 증명합니다.
 
 ### 2. 다중 데이터셋 일반화 검증
 

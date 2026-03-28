@@ -140,6 +140,7 @@ SEARCH_MODE      = "greedy"   # "greedy" | "random"
 N_RANDOM_SUBSETS = 80
 MIN_SUBSET_SIZE  = 3
 MAX_SUBSET_SIZE  = 15
+MIN_SILHOUETTE   = 0.0   # Silhouette 하한 제약 — 이 값 초과해야 후보로 인정
 
 RANDOM_SEED = 42
 

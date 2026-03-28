@@ -1,21 +1,30 @@
 """
 CASS — Search Algorithm (2단계 스크리닝)
 
+목적함수:
+  Boundary_Mean 최대화 — 공격 포인트에서 nearest benign까지의 평균 거리를 최대화.
+  공격 트래픽이 benign 영역에 위장(Camouflage)하기 어렵게 만드는 피처 조합을 탐색.
+
+  제약:
+  Silhouette > MIN_SILHOUETTE — 최소한의 클래스 분리도를 보장하여
+  공격 클러스터가 지나치게 파편화되는 것을 방지.
+
 전체 흐름:
   [선택] Pilot 검증
-    → 무작위 서브셋 PILOT_N개에 대해 Fast/Full Silhouette 모두 계산
+    → 무작위 서브셋 PILOT_N개에 대해 Fast/Full Silhouette 상관 계산
     → Spearman r >= PILOT_MIN_SPEARMAN 이면 Fast가 Full의 유효한 proxy임을 확인
 
   1단계 (Fast 스크리닝)
     → Greedy 또는 Random으로 모든 후보 서브셋을 Fast UMAP으로 평가
-    → Silhouette 점수 내림차순 정렬 후 Elbow 검출 → K 결정
+    → Boundary_Mean 점수 내림차순 정렬 후 Elbow 검출 → K 결정
+    → Silhouette > MIN_SILHOUETTE 제약 적용 (미충족 시 fallback)
 
   2단계 (Full 재평가)
     → 상위 K개 서브셋만 Full UMAP(논문 파라미터)으로 재평가
-    → 최종 Silhouette 점수 기록
+    → Silhouette > MIN_SILHOUETTE 제약 하에 Boundary_Mean 최댓값 선택
 
 Elbow 검출 방식:
-  정렬된 Fast Silhouette 점수에서 인접 gap이
+  정렬된 Fast Boundary_Mean 점수에서 인접 gap이
   max_gap * ELBOW_GAP_RATIO 이하로 떨어지는 첫 지점을 Elbow로 판정.
   ELBOW_MIN_K 이상을 항상 보장.
 """
@@ -29,10 +38,10 @@ from .config import (
     SEARCH_MODE, N_RANDOM_SUBSETS, MIN_SUBSET_SIZE, MAX_SUBSET_SIZE,
     ELBOW_GAP_RATIO, ELBOW_MIN_K,
     PILOT_N, PILOT_MIN_SPEARMAN,
-    RANDOM_SEED,
+    RANDOM_SEED, MIN_SILHOUETTE,
     UMAP_PARAMS_FAST,   # dict 객체 직접 참조 — in-place 수정으로 evaluator에도 반영
 )
-from .evaluator import evaluate_subset, evaluate_subset_full_metrics
+from .evaluator import evaluate_subset, evaluate_subset_full_metrics, compute_boundary_camouflage
 
 
 # ── Elbow 검출 ────────────────────────────────────────────────────────────────
@@ -155,7 +164,11 @@ def _greedy_fast(
     candidate_features: list,
     all_feature_names: list,
 ) -> pd.DataFrame:
-    """Greedy Forward Selection — Fast UMAP으로 모든 스텝 평가."""
+    """Greedy Forward Selection — Fast UMAP으로 모든 스텝 평가.
+
+    목적함수: Boundary_Mean 최대화 (silhouette > MIN_SILHOUETTE 제약).
+    제약 미충족 시 silhouette 제약을 완화하여 Boundary_Mean만으로 선택(fallback).
+    """
     print(f"  [1단계] Greedy Fast 스크리닝 (후보 {len(candidate_features)}개) ...")
     current = []
     rows = []
@@ -165,17 +178,34 @@ def _greedy_fast(
         if not remaining:
             break
 
+        best_bm   = -np.inf
         best_sil  = -2.0
         best_feat = None
 
         for feat in tqdm(remaining, desc=f"    Step {step:>2}", leave=False):
             trial = current + [feat]
             try:
-                sil, _ = evaluate_subset(X_scaled, y, all_feature_names, trial, fast=True)
+                sil, emb = evaluate_subset(X_scaled, y, all_feature_names, trial, fast=True)
+                if sil <= MIN_SILHOUETTE:
+                    continue
+                bm, _ = compute_boundary_camouflage(emb, y)
             except Exception:
-                sil = -2.0
-            if sil > best_sil:
-                best_sil, best_feat = sil, feat
+                continue
+            if bm > best_bm:
+                best_bm, best_sil, best_feat = bm, sil, feat
+
+        # fallback: silhouette 제약 미충족 시 완화
+        if best_feat is None:
+            print(f"    Step {step:>2}: [Fallback] silhouette ≤ {MIN_SILHOUETTE} — 제약 완화")
+            for feat in remaining:
+                trial = current + [feat]
+                try:
+                    sil, emb = evaluate_subset(X_scaled, y, all_feature_names, trial, fast=True)
+                    bm, _ = compute_boundary_camouflage(emb, y)
+                except Exception:
+                    continue
+                if bm > best_bm:
+                    best_bm, best_sil, best_feat = bm, sil, feat
 
         if best_feat is None:
             break
@@ -187,8 +217,9 @@ def _greedy_fast(
             "n_features":    len(current),
             "features":      list(current),
             "fast_sil":      round(best_sil, 4),
+            "fast_bm":       round(best_bm, 4),
         })
-        print(f"    Step {step:>2}: +{best_feat:<28} | fast_sil={best_sil:+.4f}")
+        print(f"    Step {step:>2}: +{best_feat:<28} | fast_bm={best_bm:.4f}  fast_sil={best_sil:+.4f}")
 
     return pd.DataFrame(rows)
 
@@ -200,7 +231,10 @@ def _random_fast(
     all_feature_names: list,
     n_subsets: int,
 ) -> pd.DataFrame:
-    """Random 서브셋 샘플링 — Fast UMAP으로 전체 평가."""
+    """Random 서브셋 샘플링 — Fast UMAP으로 전체 평가.
+
+    목적함수: Boundary_Mean 최대화. fast_bm 기준으로 Elbow 검출 후 Full 재평가.
+    """
     print(f"  [1단계] Random Fast 스크리닝 ({n_subsets}개) ...")
     rng_py = random.Random(RANDOM_SEED)
 
@@ -217,14 +251,16 @@ def _random_fast(
     rows = []
     for i, subset in enumerate(tqdm(subsets, desc="    Fast 평가")):
         try:
-            sil, _ = evaluate_subset(X_scaled, y, all_feature_names, subset, fast=True)
+            sil, emb = evaluate_subset(X_scaled, y, all_feature_names, subset, fast=True)
+            bm, _    = compute_boundary_camouflage(emb, y)
             rows.append({
                 "subset_id":  i,
                 "n_features": len(subset),
                 "features":   list(subset),
                 "fast_sil":   round(sil, 4),
+                "fast_bm":    round(bm, 4),
             })
-            tqdm.write(f"    [{i+1:>3}/{len(subsets)}] n={len(subset):>2} | fast_sil={sil:+.4f}")
+            tqdm.write(f"    [{i+1:>3}/{len(subsets)}] n={len(subset):>2} | fast_bm={bm:.4f}  fast_sil={sil:+.4f}")
         except Exception as e:
             tqdm.write(f"    [{i+1:>3}] 오류: {e}")
 
@@ -247,13 +283,14 @@ def _full_reeval(
     Returns:
         full_df: 상위 K개에 full_sil / boundary_mean / camouflage 컬럼이 채워진 DataFrame
     """
-    sorted_df   = fast_df.sort_values("fast_sil", ascending=False).reset_index(drop=True)
-    scores_desc = sorted_df["fast_sil"].values
+    sort_col    = "fast_bm" if "fast_bm" in fast_df.columns else "fast_sil"
+    sorted_df   = fast_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
+    scores_desc = sorted_df[sort_col].values
 
     K      = find_elbow(scores_desc)
     top_df = sorted_df.head(K).copy()
 
-    print(f"\n  [Elbow] Fast Sil 분포: max={scores_desc[0]:.4f}  min={scores_desc[-1]:.4f}")
+    print(f"\n  [Elbow] Fast BM 분포: max={scores_desc[0]:.4f}  min={scores_desc[-1]:.4f}")
     print(f"  [Elbow] K = {K}  (전체 {len(sorted_df)}개 중 상위 {K}개 Full 재평가)")
     print(f"\n  [2단계] Full UMAP 재평가 ({K}개) ...")
 
@@ -393,27 +430,20 @@ def search(
     all_feature_names: list,
     mode: str = None,
     n_subsets: int = None,
-    cam_threshold: float = None,
 ) -> tuple[list, pd.DataFrame]:
     """
     2단계 스크리닝 탐색 파이프라인.
 
-    Args:
-        cam_threshold: Camouflage@t 제약 임계값 (None → 제약 없이 Silhouette만 기준).
-                       umar2024 baseline의 실측값을 전달하면 제약 기반 선택을 수행합니다.
-
-                       선택 로직:
-                         1) camouflage ≤ cam_threshold 를 만족하는 후보만 생존
-                         2) 생존 후보 중 full_sil 최댓값 선택
-                         3) 생존 후보가 없으면 제약 완화 후 full_sil 최댓값 선택 (fallback)
+    목적함수: Boundary_Mean 최대화 (silhouette > MIN_SILHOUETTE 제약).
+    silhouette 제약을 만족하는 후보가 없으면 제약 완화 후 Boundary_Mean 최댓값 선택.
 
     Returns:
         best_subset: 선택된 최적 피처 리스트
         results_df : 탐색 결과 DataFrame
-                     greedy: (step, added_feature, n_features, features, fast_sil,
-                              full_sil, boundary_mean, camouflage)
-                     random: (subset_id, n_features, features, fast_sil,
-                              full_sil, boundary_mean, camouflage)
+                     greedy: (step, added_feature, n_features, features,
+                              fast_sil, fast_bm, full_sil, boundary_mean, camouflage)
+                     random: (subset_id, n_features, features,
+                              fast_sil, fast_bm, full_sil, boundary_mean, camouflage)
     """
     if mode is None:
         mode = SEARCH_MODE
@@ -421,8 +451,7 @@ def search(
         n_subsets = N_RANDOM_SUBSETS
 
     print(f"\n[Search] 2단계 스크리닝 (mode={mode})")
-    if cam_threshold is not None:
-        print(f"  제약 기준  : Camouflage@t ≤ {cam_threshold:.4f} (umar2024 실측값)")
+    print(f"  목적함수  : Boundary_Mean 최대화 (silhouette > {MIN_SILHOUETTE} 제약)")
 
     # 1단계: Fast 스크리닝
     if mode == "greedy":
@@ -438,40 +467,28 @@ def search(
     # 2단계: Elbow K → Full 재평가 (full_sil + boundary_mean + camouflage)
     results_df = _full_reeval(fast_df, X_scaled, y, all_feature_names)
 
-    # ── 제약 기반 최적 서브셋 선택 ───────────────────────────────────────────
-    valid = results_df.dropna(subset=["full_sil"])
+    # ── Silhouette > MIN_SILHOUETTE 제약 + Boundary_Mean 최대화 ─────────────
+    valid = results_df.dropna(subset=["full_sil", "boundary_mean"])
     if valid.empty:
         return [], results_df
 
-    if cam_threshold is not None and "camouflage" in valid.columns:
-        survived = valid[valid["camouflage"] <= cam_threshold].dropna(subset=["camouflage"])
-        n_total  = len(valid)
-        n_drop   = n_total - len(survived)
-
-        if survived.empty:
-            print(
-                f"\n  [Constraint] 경고: camouflage ≤ {cam_threshold:.4f} 를 만족하는 "
-                f"후보가 없습니다. 제약 완화 → full_sil 기준으로 fallback."
-            )
-            survived = valid
-        else:
-            print(
-                f"\n  [Constraint] camouflage ≤ {cam_threshold:.4f}: "
-                f"{len(survived)}/{n_total}개 생존 ({n_drop}개 탈락)"
-            )
-
-        best_idx    = survived["full_sil"].idxmax()
-        best_subset = survived.loc[best_idx, "features"]
-        best_full   = survived.loc[best_idx, "full_sil"]
-        best_cam    = survived.loc[best_idx, "camouflage"]
-        best_bm     = survived.loc[best_idx, "boundary_mean"]
-        print(
-            f"  최적 서브셋 (full_sil={best_full:.4f} | "
-            f"bm={best_bm:.4f} | cam={best_cam:.4f}): {best_subset}"
-        )
+    survived = valid[valid["full_sil"] > MIN_SILHOUETTE]
+    if survived.empty:
+        print(f"\n  [Constraint] silhouette > {MIN_SILHOUETTE} 만족하는 후보 없음. 제약 완화.")
+        survived = valid
     else:
-        best_subset = valid.loc[valid["full_sil"].idxmax(), "features"]
-        best_full   = valid["full_sil"].max()
-        print(f"\n  최적 서브셋 (full_sil={best_full:.4f}): {best_subset}")
+        n_drop = len(valid) - len(survived)
+        print(
+            f"\n  [Constraint] silhouette > {MIN_SILHOUETTE}: "
+            f"{len(survived)}/{len(valid)}개 생존 ({n_drop}개 탈락)"
+        )
+
+    best_idx    = survived["boundary_mean"].idxmax()
+    best_subset = survived.loc[best_idx, "features"]
+    best_bm     = survived.loc[best_idx, "boundary_mean"]
+    best_full   = survived.loc[best_idx, "full_sil"]
+    print(
+        f"  최적 서브셋 (boundary_mean={best_bm:.4f} | full_sil={best_full:.4f}): {best_subset}"
+    )
 
     return best_subset, results_df
