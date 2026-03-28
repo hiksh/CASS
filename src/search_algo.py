@@ -390,12 +390,16 @@ def pilot_validation_with_retry(
     base_neighbors = UMAP_PARAMS_FAST["n_neighbors"]
 
     for attempt in range(max_retries + 1):
+        # 매 시도마다 n_neighbors를 명시적으로 설정.
+        # attempt=0 은 base_neighbors 그대로, attempt>0 은 증가분 적용.
+        # in-place 수정으로 evaluator.py의 Fast UMAP에 즉시 반영됨.
+        current_n = base_neighbors + attempt * neighbor_step
+        UMAP_PARAMS_FAST["n_neighbors"] = current_n
+
         if attempt > 0:
-            new_n = base_neighbors + attempt * neighbor_step
-            UMAP_PARAMS_FAST["n_neighbors"] = new_n
             print(
                 f"\n[Pilot 재시도 {attempt}/{max_retries}] "
-                f"n_neighbors {base_neighbors} → {new_n}"
+                f"n_neighbors {base_neighbors} → {current_n}"
             )
 
         r, pilot_df = pilot_validation(X_scaled, y, candidate_features, all_feature_names, n=n)
@@ -403,12 +407,11 @@ def pilot_validation_with_retry(
         if not np.isnan(r) and r >= PILOT_MIN_SPEARMAN:
             if attempt > 0:
                 print(
-                    f"  ✓ n_neighbors={UMAP_PARAMS_FAST['n_neighbors']} 에서 통과 "
+                    f"  ✓ n_neighbors={current_n} 에서 통과 "
                     f"(r={r:.4f} ≥ {PILOT_MIN_SPEARMAN})"
                 )
                 print(
-                    f"  이후 Fast 스크리닝은 n_neighbors="
-                    f"{UMAP_PARAMS_FAST['n_neighbors']} 로 진행됩니다."
+                    f"  이후 Fast 스크리닝은 n_neighbors={current_n} 로 진행됩니다."
                 )
             return r, pilot_df
 
