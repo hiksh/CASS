@@ -41,7 +41,10 @@ venv.bak/
 */.ipynb_checkpoints/
 
 # ── 결과물 (figures는 선택적으로 포함 가능) ──────────────────────
-results/
+results/cicids2018/exports
+results/cicids2018/logs
+results/unsw_nb15/exports
+results/unsw_nb15/logs
 
 # ── IDE ──────────────────────────────────────────────────────────
 .vscode/
