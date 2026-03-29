@@ -41,9 +41,7 @@ venv.bak/
 */.ipynb_checkpoints/
 
 # ── 결과물 (figures는 선택적으로 포함 가능) ──────────────────────
-results/logs/
-results/exports/
-# results/figures/
+results/
 
 # ── IDE ──────────────────────────────────────────────────────────
 .vscode/
@@ -62,3 +60,4 @@ desktop.ini
 *.tmp
 *.bak
 *.csv
+dummy/
