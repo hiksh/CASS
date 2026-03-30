@@ -69,6 +69,7 @@ def _make_sklearn_models() -> list[tuple[str, object]]:
                 subsample=0.8,
                 colsample_bytree=0.8,
                 eval_metric="logloss",
+                device="cpu",
                 n_jobs=-1,
                 random_state=42,
                 verbosity=0,
