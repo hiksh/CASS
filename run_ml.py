@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from src.config import get_dataset_config, MIN_SILHOUETTE
-from src.data_loader import load_dataset
+from src.data_loader import load_and_sample, preprocess
 from src.exporter import export_umap_embeddings
 from src.ml_runner import run_ml_evaluation
 
@@ -113,22 +113,31 @@ def main(args) -> None:
         print(SEP2)
         best_subset = _read_best_subset(logs_dir)
 
-        # [2] 데이터 로드 & UDBB 전처리
+        # [2] 데이터 로드 & UDBB 전처리 (best_subset 컬럼만 로드 — 메모리 절약)
         print(f"\n{SEP}")
-        print("[2/4] 데이터 로드 & UDBB 전처리")
+        print("[2/4] 데이터 로드 & UDBB 전처리  (best_subset 컬럼만 로드)")
         print(SEP2)
-        X_scaled, y, attack_step, feature_names, scaler, clip_params, _ = load_dataset(
-            csv_path       = ds["train_file"],
-            use_udbb       = True,
-            save_processed = False,
-            all_features   = ds["all_features"],
-            udbb_counts    = ds["udbb_counts"],
-            log_features   = ds["log_features"],
+        df_train = load_and_sample(
+            ds["train_file"],
+            use_udbb    = True,
+            udbb_counts = ds["udbb_counts"],
+            usecols     = best_subset,          # 필요한 컬럼만 읽음
         )
+        relevant_log = [f for f in ds["log_features"] if f in set(best_subset)]
+        X_scaled, _, scaler, clip_params = preprocess(
+            df_train,
+            feature_cols = best_subset,
+            fit_scaler   = True,
+            log_features = relevant_log,
+        )
+        y            = df_train["attack_flag"].astype(int).values
+        attack_step  = df_train["attack_step"].values
+        feature_names = best_subset             # subset만 사용
+
         n_benign = int((y == 0).sum())
         n_attack = int((y == 1).sum())
         print(f"  훈련 샘플 : {len(y):,}  (benign={n_benign:,}  attack={n_attack:,})")
-        print(f"  피처 수   : {len(feature_names)}")
+        print(f"  로드 피처 : {len(best_subset)}개  (best_subset만)")
 
         # [3] UMAP 임베딩 export
         print(f"\n{SEP}")

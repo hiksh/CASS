@@ -20,7 +20,8 @@ from .config import (
 )
 
 
-def load_and_sample(csv_path=None, use_udbb=True, udbb_counts=None) -> pd.DataFrame:
+def load_and_sample(csv_path=None, use_udbb=True, udbb_counts=None,
+                    usecols=None) -> pd.DataFrame:
     """
     CSV 파일을 로드하고 UDBB 샘플링을 적용합니다.
 
@@ -28,6 +29,8 @@ def load_and_sample(csv_path=None, use_udbb=True, udbb_counts=None) -> pd.DataFr
         csv_path   : CSV 경로 (None이면 config의 TRAIN_FILE 사용)
         use_udbb   : True → UDBB 샘플링, False → 전체 데이터 반환
         udbb_counts: 샘플 수 딕셔너리 (None이면 config의 UDBB_COUNTS 사용)
+        usecols    : 읽을 컬럼 목록 (None이면 전체). attack_flag/attack_step은
+                     자동으로 포함됩니다. 대용량 CSV에서 메모리를 절약할 때 사용.
 
     Returns:
         샘플링된 DataFrame
@@ -37,8 +40,12 @@ def load_and_sample(csv_path=None, use_udbb=True, udbb_counts=None) -> pd.DataFr
     if udbb_counts is None:
         udbb_counts = UDBB_COUNTS
 
+    # usecols 지정 시 attack_flag/attack_step 누락 방지
+    if usecols is not None:
+        usecols = list(dict.fromkeys(list(usecols) + ["attack_flag", "attack_step"]))
+
     print(f"Loading {csv_path} ...")
-    df = pd.read_csv(csv_path, low_memory=False)
+    df = pd.read_csv(csv_path, low_memory=False, usecols=usecols)
     print(f"  원본 행 수: {len(df):,}")
 
     # attack_flag, attack_step 타입 정리

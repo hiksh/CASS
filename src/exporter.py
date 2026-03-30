@@ -132,7 +132,7 @@ def load_test_data(scaler, feature_names: list, clip_params: dict,
     if test_file is None:
         test_file = TEST_FILE
     print(f"    {test_file.name} 로드 중 ...")
-    df_test = load_and_sample(test_file, use_udbb=False)
+    df_test = load_and_sample(test_file, use_udbb=False, usecols=list(feature_names))
     print(f"    원본 test 행 수  : {len(df_test):,}")
 
     X_test, _, _, _ = preprocess(
