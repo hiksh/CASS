@@ -1,5 +1,5 @@
 """
-CASS — ML Evaluator  (AutoGluon TabularPredictor + PyTorch CNN / LSTM)
+CASS — ML Evaluator  (sklearn/XGBoost + PyTorch CNN / LSTM)
 
 exports/ 디렉토리의 비교군 CSV를 읽어
 XGBoost · RandomForest · Logistic Regression · CNN · LSTM 5개 모델을
@@ -7,13 +7,12 @@ XGBoost · RandomForest · Logistic Regression · CNN · LSTM 5개 모델을
 results/{dataset}/ml/ 에 저장합니다.
 
 GPU 정책:
-  - XGBoost / RandomForest / LogisticReg : AutoGluon CPU (num_gpus=0)
+  - XGBoost / RandomForest / LogisticReg : sklearn / xgboost (CPU)
   - CNN / LSTM                           : PyTorch CUDA (GPU_MEMORY_FRACTION=0.2)
 
 실행:
+  python run_ml.py --dataset unsw_nb15
   python main.py --dataset cicids2018 --export --ml
-  python main.py --dataset unsw_nb15  --export --ml
-  python main.py --dataset cicids2018 --ml          # export가 이미 존재하는 경우
 """
 from __future__ import annotations
 
@@ -26,7 +25,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
+from xgboost import XGBClassifier
 
 import torch
 import torch.nn as nn
@@ -37,7 +39,7 @@ warnings.filterwarnings("ignore")
 
 # ── GPU 설정 ──────────────────────────────────────────────────────────────────
 
-GPU_MEMORY_FRACTION = 0.2   # A100 0.2 할당 비율
+GPU_MEMORY_FRACTION = 0.2
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -46,60 +48,49 @@ def _setup_gpu() -> None:
         try:
             torch.cuda.set_per_process_memory_fraction(GPU_MEMORY_FRACTION)
         except RuntimeError:
-            pass  # 이미 다른 컨텍스트에서 설정된 경우 무시
+            pass
         print(f"  [GPU] {torch.cuda.get_device_name(0)}  "
               f"메모리 할당: {GPU_MEMORY_FRACTION * 100:.0f}%")
     else:
         print("  [GPU] CUDA 없음 — CPU 사용")
 
 
-# ── AutoGluon 모델 정의 ────────────────────────────────────────────────────────
+# ── sklearn / XGBoost 모델 ────────────────────────────────────────────────────
 
-# (출력 이름, AutoGluon 모델 키)
-AG_MODELS = [
-    ("XGBoost",      "XGB"),
-    ("RandomForest", "RF"),
-    ("LogisticReg",  "LR"),
-]
-
-
-def _fit_ag_model(
-    train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
-    ag_key: str,
-    save_dir: Path,
-) -> float:
-    """
-    AutoGluon TabularPredictor로 단일 모델 타입을 훈련·평가합니다.
-
-    - num_bag_folds=0, num_stack_levels=0 → 단일 모델 (앙상블 없음)
-    - num_gpus=0 → CPU 전용 (0.2 GPU 할당을 CNN/LSTM에 온전히 양보)
-
-    Returns:
-        binary F1 score (float)
-    """
-    from autogluon.tabular import TabularPredictor
-
-    save_dir.mkdir(parents=True, exist_ok=True)
-
-    predictor = TabularPredictor(
-        label="attack_flag",
-        eval_metric="f1",
-        path=str(save_dir),
-        verbosity=0,
-    )
-    predictor.fit(
-        train_data=train_df,
-        hyperparameters={ag_key: {}},
-        num_bag_folds=0,
-        num_stack_levels=0,
-        num_gpus=0,
-        verbosity=0,
-    )
-
-    y_true = test_df["attack_flag"].values
-    y_pred = predictor.predict(test_df).values
-    return float(f1_score(y_true, y_pred, average="binary", pos_label=1, zero_division=0))
+def _make_sklearn_models() -> list[tuple[str, object]]:
+    """(이름, 모델 인스턴스) 리스트를 반환합니다."""
+    return [
+        (
+            "XGBoost",
+            XGBClassifier(
+                n_estimators=300,
+                max_depth=6,
+                learning_rate=0.1,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                eval_metric="logloss",
+                n_jobs=-1,
+                random_state=42,
+                verbosity=0,
+            ),
+        ),
+        (
+            "RandomForest",
+            RandomForestClassifier(
+                n_estimators=300,
+                n_jobs=-1,
+                random_state=42,
+            ),
+        ),
+        (
+            "LogisticReg",
+            LogisticRegression(
+                max_iter=1000,
+                n_jobs=-1,
+                random_state=42,
+            ),
+        ),
+    ]
 
 
 # ── PyTorch 모델 정의 ──────────────────────────────────────────────────────────
@@ -113,20 +104,19 @@ class _CNN1D(nn.Module):
     def __init__(self, n_features: int, dropout: float = 0.3):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv1d(1, 64, kernel_size=3, padding=1),   # (B, 64, F)
+            nn.Conv1d(1, 64, kernel_size=3, padding=1),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Conv1d(64, 128, kernel_size=3, padding=1),  # (B, 128, F)
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.AdaptiveAvgPool1d(1),                        # (B, 128, 1)
-            nn.Flatten(),                                   # (B, 128)
+            nn.AdaptiveAvgPool1d(1),
+            nn.Flatten(),
             nn.Dropout(dropout),
-            nn.Linear(128, 1),                             # (B, 1)
+            nn.Linear(128, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, F) → unsqueeze → (B, 1, F)
         return self.net(x.unsqueeze(1)).squeeze(1)
 
 
@@ -134,7 +124,6 @@ class _LSTMNet(nn.Module):
     """
     LSTM NIDS 분류기.
     각 피처를 단일 타임스텝으로 취급: (batch, n_features, 1).
-    마지막 타임스텝의 hidden state → Linear → logit.
     """
 
     def __init__(
@@ -156,12 +145,15 @@ class _LSTMNet(nn.Module):
         self.fc   = nn.Linear(hidden_size, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, F) → (B, F, 1)
         out, _ = self.lstm(x.unsqueeze(-1))
         return self.fc(self.drop(out[:, -1, :])).squeeze(1)
 
 
 # ── PyTorch 훈련 루프 ──────────────────────────────────────────────────────────
+
+_TRAIN_BATCH = 1024   # 훈련 배치 크기
+_INFER_BATCH = 4096   # 추론 배치 크기 (데이터를 CPU에 두고 배치씩 GPU로)
+
 
 def _train_torch(
     model: nn.Module,
@@ -170,21 +162,22 @@ def _train_torch(
     X_vl: np.ndarray,
     y_vl: np.ndarray,
     epochs: int = 30,
-    batch_size: int = 1024,
     lr: float = 1e-3,
     patience: int = 5,
 ) -> nn.Module:
     """
-    BCEWithLogitsLoss + Adam + 조기종료(val F1 기준, patience=5).
-    최고 val-F1 가중치를 복원하여 반환합니다.
+    BCEWithLogitsLoss + Adam + 조기종료(val F1).
+    데이터는 CPU에 유지하고 배치 단위로만 GPU로 이동합니다.
     """
     model = model.to(DEVICE)
 
-    Xt = torch.FloatTensor(X_tr).to(DEVICE)
-    yt = torch.FloatTensor(y_tr).to(DEVICE)
-    Xv = torch.FloatTensor(X_vl).to(DEVICE)
+    # 데이터는 CPU 텐서로 유지
+    Xt = torch.FloatTensor(X_tr)
+    yt = torch.FloatTensor(y_tr)
+    Xv = torch.FloatTensor(X_vl)
 
-    loader    = DataLoader(TensorDataset(Xt, yt), batch_size=batch_size, shuffle=True)
+    loader    = DataLoader(TensorDataset(Xt, yt), batch_size=_TRAIN_BATCH, shuffle=True)
+    val_loader = DataLoader(TensorDataset(Xv), batch_size=_INFER_BATCH)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
 
@@ -193,19 +186,23 @@ def _train_torch(
     for _ in range(epochs):
         model.train()
         for xb, yb in loader:
+            xb, yb = xb.to(DEVICE), yb.to(DEVICE)
             optimizer.zero_grad()
             criterion(model(xb), yb).backward()
             optimizer.step()
 
         model.eval()
+        preds = []
         with torch.no_grad():
-            preds = (torch.sigmoid(model(Xv)) >= 0.5).cpu().numpy().astype(int)
+            for (xb,) in val_loader:
+                p = (torch.sigmoid(model(xb.to(DEVICE))) >= 0.5).cpu().numpy()
+                preds.extend(p.astype(int))
 
         val_f1 = f1_score(y_vl, preds, average="binary", zero_division=0)
         if val_f1 > best_f1:
-            best_f1  = val_f1
+            best_f1    = val_f1
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-            wait = 0
+            wait       = 0
         else:
             wait += 1
             if wait >= patience:
@@ -217,10 +214,17 @@ def _train_torch(
 
 
 def _eval_torch(model: nn.Module, X_test: np.ndarray, y_test: np.ndarray) -> float:
+    """배치 단위 추론. X_test 전체를 GPU에 올리지 않습니다."""
     model.eval()
+    loader = DataLoader(
+        TensorDataset(torch.FloatTensor(X_test)),
+        batch_size=_INFER_BATCH,
+    )
+    preds = []
     with torch.no_grad():
-        logits = model(torch.FloatTensor(X_test).to(DEVICE))
-        preds  = (torch.sigmoid(logits) >= 0.5).cpu().numpy().astype(int)
+        for (xb,) in loader:
+            p = (torch.sigmoid(model(xb.to(DEVICE))) >= 0.5).cpu().numpy()
+            preds.extend(p.astype(int))
     return float(f1_score(y_test, preds, average="binary", zero_division=0))
 
 
@@ -230,20 +234,8 @@ def _run_group(
     group_name: str,
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
-    ag_base_dir: Path,
 ) -> dict[str, float]:
-    """
-    비교군 하나에 대해 5개 모델 전부 훈련·평가합니다.
-
-    Args:
-        group_name  : 비교군 이름 (예: "cass", "anova")
-        train_df    : train_*.csv DataFrame (피처 + attack_flag + attack_step)
-        test_df     : test_*.csv  DataFrame (동일 구조)
-        ag_base_dir : AutoGluon 모델 저장 루트
-
-    Returns:
-        {모델이름: binary_f1} 딕셔너리
-    """
+    """비교군 하나에 대해 5개 모델 전부 훈련·평가합니다."""
     feat_cols = [c for c in train_df.columns if c not in ("attack_flag", "attack_step")]
 
     X_train = train_df[feat_cols].values.astype(np.float32)
@@ -252,26 +244,22 @@ def _run_group(
     y_test  = test_df["attack_flag"].values.astype(np.int32)
     n_feat  = X_train.shape[1]
 
-    # AutoGluon에 넘길 DataFrame: attack_step 제거, attack_flag 유지
-    ag_train = train_df.drop(columns=["attack_step"], errors="ignore")
-    ag_test  = test_df.drop(columns=["attack_step"],  errors="ignore")
-
     scores: dict[str, float] = {}
 
-    # ── AutoGluon (XGBoost / RandomForest / LogisticReg) ─────────────────────
-    for display, ag_key in AG_MODELS:
+    # ── sklearn / XGBoost ────────────────────────────────────────────────────
+    for display, clf in _make_sklearn_models():
         try:
-            f1 = _fit_ag_model(
-                ag_train, ag_test, ag_key,
-                ag_base_dir / f"{group_name}_{ag_key}",
-            )
+            clf.fit(X_train, y_train)
+            y_pred = clf.predict(X_test)
+            f1 = float(f1_score(y_test, y_pred, average="binary",
+                                pos_label=1, zero_division=0))
             scores[display] = f1
             print(f"    {display:<15}: F1 = {f1:.4f}")
         except Exception as exc:
             print(f"    {display:<15}: 실패 — {exc}")
             scores[display] = float("nan")
 
-    # ── Train / Val 분리 (90 / 10) ─────────────────────────────────────────
+    # ── Train / Val 분리 (90 / 10) ───────────────────────────────────────────
     rng   = np.random.RandomState(42)
     idx   = rng.permutation(len(X_train))
     n_val = max(int(len(X_train) * 0.1), 1)
@@ -317,7 +305,6 @@ def _plot_heatmap(
     save_path: Path,
     dataset_name: str,
 ) -> None:
-    """그룹 × 모델 F1 히트맵."""
     n_g, n_m = results_df.shape
     fig, ax = plt.subplots(figsize=(max(8, n_m * 1.6), max(3, n_g * 0.8)))
 
@@ -347,7 +334,6 @@ def _plot_bar(
     save_path: Path,
     dataset_name: str,
 ) -> None:
-    """그룹별 모델 F1 점수 그룹 막대 차트."""
     n_groups = len(results_df)
     n_models = len(results_df.columns)
     bar_w    = 0.8 / n_models
@@ -400,21 +386,19 @@ def run_ml_evaluation(
     Args:
         exports_dir  : train_*.csv / test_*.csv 가 저장된 경로
         ml_dir       : 결과 저장 경로 (results/{dataset}/ml/)
-        dataset_name : 차트 제목용 데이터셋 이름 (예: "cicids2018")
+        dataset_name : 차트 제목용 데이터셋 이름 (예: "unsw_nb15")
 
     Returns:
         group × model binary-F1 DataFrame (ml_dir/f1_results.csv 에도 저장)
     """
     _setup_gpu()
     ml_dir.mkdir(parents=True, exist_ok=True)
-    ag_cache = ml_dir / "ag_models"
 
     train_files = sorted(exports_dir.glob("train_*.csv"))
     if not train_files:
         raise FileNotFoundError(f"exports 디렉토리에 train_*.csv 없음: {exports_dir}")
 
     groups = [f.stem[len("train_"):] for f in train_files]
-    print(f"  비교군: {groups}\n")
 
     all_rows: list[dict] = []
 
@@ -430,7 +414,7 @@ def run_ml_evaluation(
         train_df = pd.read_csv(train_path)
         test_df  = pd.read_csv(test_path)
 
-        scores = _run_group(group, train_df, test_df, ag_cache)
+        scores = _run_group(group, train_df, test_df)
         scores["group"] = group
         all_rows.append(scores)
 
@@ -438,7 +422,6 @@ def run_ml_evaluation(
         print("  [경고] 평가된 비교군이 없습니다.")
         return pd.DataFrame()
 
-    # 열 순서: MODEL_ORDER 기준 정렬
     available_cols = [m for m in MODEL_ORDER if m in all_rows[0]]
     results_df = pd.DataFrame(all_rows).set_index("group")[available_cols]
 

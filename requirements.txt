@@ -18,12 +18,10 @@ umap-learn>=0.5.3
 hdbscan>=0.8.29
 tqdm>=4.65.0
 
-# ── AutoGluon (ML 평가: XGBoost / RandomForest / LogisticReg) ────────────────
-# tabular 서브패키지만 설치하여 의존성 최소화
-# pip install autogluon.tabular
-autogluon.tabular>=1.0.0
+# ── ML 평가 (XGBoost / RandomForest / LogisticReg) ───────────────────────────
+xgboost>=2.0.0
 
 # ── PyTorch (CNN / LSTM) ─────────────────────────────────────────────────────
 # CUDA 12.x 기준 (A100):
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# pip install torch --index-url https://download.pytorch.org/whl/cu121
 torch>=2.1.0
