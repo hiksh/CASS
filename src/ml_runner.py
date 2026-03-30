@@ -300,13 +300,22 @@ def _run_group(
 MODEL_ORDER = ["XGBoost", "RandomForest", "LogisticReg", "CNN", "LSTM"]
 
 
+def _umap_split(index) -> int:
+    """results_df.index에서 'umap'으로 시작하는 첫 번째 행 번호를 반환합니다.
+    없으면 len(index)를 반환합니다."""
+    for i, name in enumerate(index):
+        if str(name).startswith("umap"):
+            return i
+    return len(index)
+
+
 def _plot_heatmap(
     results_df: pd.DataFrame,
     save_path: Path,
     dataset_name: str,
 ) -> None:
     n_g, n_m = results_df.shape
-    fig, ax = plt.subplots(figsize=(max(8, n_m * 1.6), max(3, n_g * 0.8)))
+    fig, ax = plt.subplots(figsize=(max(8, n_m * 1.6), max(3, n_g * 0.8 + 0.5)))
 
     sns.heatmap(
         results_df.astype(float),
@@ -317,6 +326,20 @@ def _plot_heatmap(
         ax=ax,
         cbar_kws={"label": "Binary F1"},
     )
+
+    # umap 그룹 구분선 (행 방향)
+    split = _umap_split(results_df.index)
+    if 0 < split < n_g:
+        ax.axhline(split, color="black", linewidth=2.0, linestyle="--")
+        ax.text(
+            n_m + 0.05, split / 2,         "Raw Features",
+            va="center", fontsize=8, style="italic", color="dimgray",
+        )
+        ax.text(
+            n_m + 0.05, split + (n_g - split) / 2, "UMAP Embedding",
+            va="center", fontsize=8, style="italic", color="dimgray",
+        )
+
     title = "ML Evaluation — Binary F1"
     if dataset_name:
         title += f"  [{dataset_name.upper()}]"
@@ -357,9 +380,22 @@ def _plot_bar(
                     fontsize=7, rotation=45,
                 )
 
+    # umap 그룹 구분선 (열 방향)
+    split = _umap_split(results_df.index)
+    if 0 < split < n_groups:
+        ax.axvline(split - 0.5, color="black", linewidth=1.5, linestyle="--", alpha=0.6)
+        ax.text(
+            (split - 1) / 2, 1.09, "Raw Features",
+            ha="center", fontsize=9, style="italic", color="dimgray",
+        )
+        ax.text(
+            split + (n_groups - split - 1) / 2, 1.09, "UMAP Embedding",
+            ha="center", fontsize=9, style="italic", color="dimgray",
+        )
+
     ax.set_xticks(x)
     ax.set_xticklabels(results_df.index, rotation=15, ha="right")
-    ax.set_ylim(0, 1.12)
+    ax.set_ylim(0, 1.15)
     ax.set_ylabel("Binary F1", fontsize=11)
     title = "ML Evaluation — Binary F1 per Feature Group"
     if dataset_name:

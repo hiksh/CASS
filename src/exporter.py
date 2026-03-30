@@ -117,8 +117,8 @@ def _extract(
 
 # ── Test 데이터 로드 ──────────────────────────────────────────────────────────
 
-def _load_test(scaler, feature_names: list, clip_params: dict,
-               test_file=None, log_features: list = None):
+def load_test_data(scaler, feature_names: list, clip_params: dict,
+                   test_file=None, log_features: list = None):
     """
     test-flow.csv를 로드하고 훈련 데이터와 동일한 scaler·clip_params로 전처리합니다.
     피처 목록과 순서는 훈련 데이터와 동일하게 유지됩니다.
@@ -224,7 +224,7 @@ def export_comparison_sets(
 
     # ── Test 데이터 로드 ─────────────────────────────────────────────────────
     print(f"\n  [2/3] Test 데이터 로드 ...")
-    X_test, y_test, step_test = _load_test(
+    X_test, y_test, step_test = load_test_data(
         scaler, feature_names, clip_params,
         test_file=test_file, log_features=log_features,
     )
@@ -258,3 +258,96 @@ def export_comparison_sets(
     print(SEP)
 
     return groups
+
+
+# ── UMAP 임베딩 Export ────────────────────────────────────────────────────────
+
+def export_umap_embeddings(
+    X_scaled: np.ndarray,
+    y: np.ndarray,
+    attack_step: np.ndarray,
+    feature_names: list,
+    best_features: list,
+    scaler,
+    clip_params: dict,
+    export_dir=None,
+    test_file=None,
+    log_features: list = None,
+    n_components_list: list = None,
+) -> None:
+    """
+    CASS best subset 피처로 UMAP 임베딩을 생성하고 train/test CSV로 저장합니다.
+
+    훈련: 기존 UDBB 샘플(X_scaled)에 UMAP fit_transform — 동일 샘플 구성 유지.
+    테스트: test-flow.csv 전체를 동일 UMAP으로 transform.
+
+    저장 파일 (export_dir/):
+      train_umap2d.csv / test_umap2d.csv
+      train_umap3d.csv / test_umap3d.csv  (n_components_list 기본값 기준)
+
+    Args:
+        n_components_list: UMAP 차원 수 목록 (기본 [2, 3])
+    """
+    from cuml.manifold import UMAP as cumlUMAP
+    from .config import UMAP_PARAMS
+
+    if n_components_list is None:
+        n_components_list = [2, 3]
+    if export_dir is None:
+        export_dir = EXPORTS_DIR
+
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    SEP = "=" * 65
+    print(f"\n{SEP}")
+    print("[UMAP Embedding Export] best subset → UMAP 임베딩 CSV 생성")
+    print(f"  best subset 피처 수 : {len(best_features)}")
+    print(f"  n_components        : {n_components_list}")
+    print(f"  훈련 샘플 수        : {len(X_scaled):,}  (기존 UDBB 구성 그대로)")
+    print(SEP)
+
+    # best subset 피처 인덱스
+    feat_list = list(feature_names)
+    idx       = [feat_list.index(f) for f in best_features if f in feat_list]
+    X_tr_sub  = X_scaled[:, idx].astype(np.float32)
+
+    # test 데이터 로드 (기존 exporter와 동일한 scaler/clip)
+    print("\n  test 데이터 로드 중 ...")
+    X_test, y_test, step_test = load_test_data(
+        scaler, feature_names, clip_params,
+        test_file=test_file,
+        log_features=log_features,
+    )
+    X_te_sub = X_test[:, idx].astype(np.float32)
+
+    for nc in n_components_list:
+        group_name = f"umap{nc}d"
+        print(f"\n  ── {group_name} (n_components={nc}) ──")
+
+        params  = {**UMAP_PARAMS, "n_components": nc}
+        reducer = cumlUMAP(**params)
+
+        print(f"    UMAP fit_transform (train {len(X_tr_sub):,}행) ...")
+        emb_train = np.asarray(reducer.fit_transform(X_tr_sub))
+
+        print(f"    UMAP transform     (test  {len(X_te_sub):,}행) ...")
+        emb_test  = np.asarray(reducer.transform(X_te_sub))
+
+        col_names = [f"umap_{i + 1}" for i in range(nc)]
+
+        tr_df = pd.DataFrame(emb_train, columns=col_names)
+        tr_df["attack_flag"] = y
+        tr_df["attack_step"] = attack_step
+
+        te_df = pd.DataFrame(emb_test, columns=col_names)
+        te_df["attack_flag"] = y_test
+        te_df["attack_step"] = step_test
+
+        tr_path = export_dir / f"train_{group_name}.csv"
+        te_path = export_dir / f"test_{group_name}.csv"
+        tr_df.to_csv(tr_path, index=False)
+        te_df.to_csv(te_path, index=False)
+        print(f"    저장: train_{group_name}.csv  /  test_{group_name}.csv")
+
+    print(f"\n  저장 위치: {export_dir}")
+    print(SEP)

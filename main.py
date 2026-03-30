@@ -36,7 +36,7 @@ from src.pre_filter import pre_filter
 from src.search_algo import (
     search, pilot_validation, pilot_validation_with_retry, compute_reference_camouflage,
 )
-from src.exporter import export_comparison_sets, build_comparison_groups
+from src.exporter import export_comparison_sets, build_comparison_groups, export_umap_embeddings
 from src.analyzer import analyze_comparison_groups, plot_comparison_heatmap
 from src.ml_runner import run_ml_evaluation
 
@@ -248,7 +248,13 @@ def main(args) -> None:
     for d in [FIGURES_DIR, LOGS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
 
-    total_stages = 4 + (1 if args.export else 0) + (1 if args.analyze else 0) + (1 if args.ml else 0)
+    total_stages = (
+        4
+        + (1 if args.export  else 0)
+        + (1 if args.umap    else 0)
+        + (1 if args.analyze else 0)
+        + (1 if args.ml      else 0)
+    )
 
     print(_SEP)
     print("CASS — Cluster-Aware Feature Selection System")
@@ -258,6 +264,7 @@ def main(args) -> None:
     print(f"  Top-K    : {args.top_k}")
     print(f"  Pilot    : {'ON' if args.pilot else 'OFF'}")
     print(f"  Export   : {'ON' if args.export else 'OFF'}")
+    print(f"  UMAP Emb : {'ON' if args.umap else 'OFF'}")
     print(f"  Analyze  : {'ON' if args.analyze else 'OFF'}")
     print(f"  ML       : {'ON' if args.ml else 'OFF'}")
     print(f"  Stages   : {total_stages}")
@@ -302,7 +309,10 @@ def main(args) -> None:
             X_scaled, y, top_features, feature_names,
         )
         pilot_df.to_csv(LOGS_DIR / "pilot_validation.csv", index=False)
-        plot_pilot(pilot_df, spearman_r, FIGURES_DIR / "pilot_fast_vs_full.png")
+        if pilot_df is not None and {"fast_bm", "full_bm"}.issubset(pilot_df.columns):
+            plot_pilot(pilot_df, spearman_r, FIGURES_DIR / "pilot_fast_vs_full.png")
+        else:
+            _sub("[경고] Pilot 데이터 불완전 — 시각화 건너뜀")
 
         if not np.isnan(spearman_r) and spearman_r < PILOT_MIN_SPEARMAN:
             _sub(f"[경고] 최대 재시도 후에도 Spearman r={spearman_r:.4f} < {PILOT_MIN_SPEARMAN}")
@@ -394,7 +404,22 @@ def main(args) -> None:
             )
         stage += 1
 
-    # ── 6. [선택] Analyze ────────────────────────────────────────────────────
+    # ── 6. [선택] UMAP 임베딩 Export ─────────────────────────────────────────
+    if args.umap:
+        if not best_subset:
+            print(f"\n[{stage}/{total_stages}] [경고] 최적 부분집합이 없어 UMAP Export를 건너뜁니다.")
+        else:
+            _header(f"[{stage}/{total_stages}]", "UMAP 임베딩 Export (2D / 3D)")
+            export_umap_embeddings(
+                X_scaled, y, attack_step, feature_names,
+                best_subset, scaler, clip_params,
+                export_dir=EXPORTS_DIR,
+                test_file=ds["test_file"],
+                log_features=ds["log_features"],
+            )
+        stage += 1
+
+    # ── 7. [선택] Analyze ────────────────────────────────────────────────────
     if args.analyze:
         if not best_subset:
             print(f"\n[{stage}/{total_stages}] [경고] 최적 부분집합이 없어 Analyze를 건너뜁니다.")
@@ -415,14 +440,14 @@ def main(args) -> None:
                 )
         stage += 1
 
-    # ── 7. [선택] ML 평가 ────────────────────────────────────────────────────
+    # ── 8. [선택] ML 평가 ────────────────────────────────────────────────────
     if args.ml:
-        _header(f"[{stage}/{total_stages}]", "ML 평가 (AutoGluon + CNN/LSTM)")
+        _header(f"[{stage}/{total_stages}]", "ML 평가 (XGBoost / RF / LR / CNN / LSTM)")
         if not EXPORTS_DIR.exists() or not list(EXPORTS_DIR.glob("train_*.csv")):
             print(f"  [경고] {EXPORTS_DIR} 에 train_*.csv 없음")
-            print("  --export 플래그를 함께 사용하거나 먼저 export를 실행하세요.")
+            print("  --export 또는 --umap 플래그를 함께 사용하거나 먼저 실행하세요.")
         else:
-            ml_results = run_ml_evaluation(
+            run_ml_evaluation(
                 exports_dir=EXPORTS_DIR,
                 ml_dir=ML_DIR,
                 dataset_name=args.dataset,
@@ -448,8 +473,11 @@ def main(args) -> None:
         _sub(f"최적 피처 수      : {len(best_subset)}개")
     _sub(f"로그 저장 위치    : {LOGS_DIR}")
     _sub(f"시각화 저장 위치  : {FIGURES_DIR}")
-    if args.export:
+    if args.export or args.umap:
         _sub(f"Export 저장 위치  : {EXPORTS_DIR}")
+    if args.umap:
+        _sub(f"  - train_umap2d.csv / test_umap2d.csv")
+        _sub(f"  - train_umap3d.csv / test_umap3d.csv")
     if args.analyze:
         _sub(f"히트맵 저장 위치  : {FIGURES_DIR / 'comparison_heatmap.png'}")
     if args.ml:
@@ -486,6 +514,14 @@ def parse_args():
     parser.add_argument(
         "--export", action="store_true",
         help="비교군별 train/test CSV를 results/exports/에 저장",
+    )
+    parser.add_argument(
+        "--umap", action="store_true",
+        help=(
+            "best subset 피처 → UMAP 2D/3D 임베딩 CSV를 exports/에 추가 저장 "
+            "(train: 기존 UDBB 동일 샘플, test: test-flow.csv 전체). "
+            "--ml 실행 시 자동으로 평가에 포함됩니다."
+        ),
     )
     parser.add_argument(
         "--analyze", action="store_true",
