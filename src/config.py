@@ -281,7 +281,7 @@ MIRAI_FIGURES_DIR = MIRAI_RESULTS_DIR / "figures"
 MIRAI_LOGS_DIR    = MIRAI_RESULTS_DIR / "logs"
 MIRAI_EXPORTS_DIR = MIRAI_RESULTS_DIR / "exports"
 
-# 수치형 피처 42개 (window_start/end, src/dst IP, src_port, flow_protocol 제외)
+# 수치형 피처 42개 (window_start/end, src/dst IP, src_port, flow_protocol, attack_* 제외)
 MIRAI_ALL_FEATURES = [
     # 포트 / 프로토콜
     "dst_port",             "protocol",
@@ -298,7 +298,7 @@ MIRAI_ALL_FEATURES = [
     # 처리율
     "fpkts_per_second",     "bpkts_per_second",     "flow_packets_per_second",
     # 플로우 IAT
-    "flow_iat_mean",        "flow_iat_std",         "flow_iat_max",     "flow_iat_min",
+    "flow_iat_total",       "flow_iat_mean",        "flow_iat_std",     "flow_iat_max",     "flow_iat_min",
     # 순방향 IAT
     "forward_iat_total",    "forward_iat_mean",     "forward_iat_std",
     "forward_iat_max",      "forward_iat_min",
@@ -320,7 +320,7 @@ MIRAI_LOG_FEATURES = [
     "backward_packet_length_max",      "backward_packet_length_min",
     "backward_packet_length_mean",     "backward_packet_length_std",
     "fpkts_per_second",                "bpkts_per_second",   "flow_packets_per_second",
-    "flow_iat_mean",                   "flow_iat_std",       "flow_iat_max",
+    "flow_iat_total",                  "flow_iat_mean",      "flow_iat_std",       "flow_iat_max",
     "forward_iat_total",               "forward_iat_mean",   "forward_iat_std",  "forward_iat_max",
     "backward_iat_total",              "backward_iat_mean",  "backward_iat_std", "backward_iat_max",
 ]
@@ -352,7 +352,7 @@ def get_dataset_config(name: str) -> dict:
     데이터셋 이름으로 설정 딕셔너리를 반환합니다.
 
     Args:
-        name: "cicids2018" 또는 "unsw_nb15"
+        name: "cicids2018", "unsw_nb15", 또는 "mirai"
 
     Returns:
         {train_file, test_file, all_features, log_features, udbb_counts,
