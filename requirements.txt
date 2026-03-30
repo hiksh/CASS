@@ -3,12 +3,27 @@
 # conda: conda install -c rapidsai -c conda-forge cuml
 # cuml>=23.0
 
+# ── 기본 데이터 처리 ──────────────────────────────────────────────────────────
 scikit-learn>=1.3.0
 pandas>=2.0.0
 numpy>=1.24.0
+scipy>=1.10.0
+
+# ── 시각화 ────────────────────────────────────────────────────────────────────
 matplotlib>=3.7.0
 seaborn>=0.12.0
-scipy>=1.10.0
-tqdm>=4.65.0
+
+# ── UMAP / 클러스터링 ─────────────────────────────────────────────────────────
 umap-learn>=0.5.3
 hdbscan>=0.8.29
+tqdm>=4.65.0
+
+# ── AutoGluon (ML 평가: XGBoost / RandomForest / LogisticReg) ────────────────
+# tabular 서브패키지만 설치하여 의존성 최소화
+# pip install autogluon.tabular
+autogluon.tabular>=1.0.0
+
+# ── PyTorch (CNN / LSTM) ─────────────────────────────────────────────────────
+# CUDA 12.x 기준 (A100):
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch>=2.1.0
