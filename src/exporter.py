@@ -262,6 +262,26 @@ def export_comparison_sets(
 
 # ── UMAP 임베딩 Export ────────────────────────────────────────────────────────
 
+# test셋 transform 배치 크기 — GPU VRAM에 따라 조정 (기본 200k)
+_UMAP_TRANSFORM_BATCH = 200_000
+
+
+def _batched_transform(reducer, X: np.ndarray, batch_size: int) -> np.ndarray:
+    """
+    대용량 X를 batch_size 단위로 나눠 UMAP transform 후 이어 붙입니다.
+    GPU VRAM 부족으로 한 번에 transform이 불가능한 경우 사용합니다.
+    """
+    results = []
+    n = len(X)
+    for start in range(0, n, batch_size):
+        end = min(start + batch_size, n)
+        batch = X[start:end]
+        results.append(np.asarray(reducer.transform(batch)))
+        print(f"      {end:>{len(str(n))},} / {n:,} 완료", end="\r")
+    print()
+    return np.concatenate(results, axis=0)
+
+
 def export_umap_embeddings(
     X_scaled: np.ndarray,
     y: np.ndarray,
@@ -330,8 +350,8 @@ def export_umap_embeddings(
         print(f"    UMAP fit_transform (train {len(X_tr_sub):,}행) ...")
         emb_train = np.asarray(reducer.fit_transform(X_tr_sub))
 
-        print(f"    UMAP transform     (test  {len(X_te_sub):,}행) ...")
-        emb_test  = np.asarray(reducer.transform(X_te_sub))
+        print(f"    UMAP transform     (test  {len(X_te_sub):,}행, 배치={_UMAP_TRANSFORM_BATCH:,}) ...")
+        emb_test = _batched_transform(reducer, X_te_sub, _UMAP_TRANSFORM_BATCH)
 
         col_names = [f"umap_{i + 1}" for i in range(nc)]
 
