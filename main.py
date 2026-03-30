@@ -445,7 +445,7 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--dataset", choices=["cicids2018", "unsw_nb15"], default="cicids2018",
+        "--dataset", choices=["cicids2018", "unsw_nb15", "mirai"], default="cicids2018",
         help="사용할 데이터셋",
     )
     parser.add_argument(

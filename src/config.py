@@ -267,6 +267,84 @@ UNSW_LITERATURE_BASELINES = {
 }
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Mirai 데이터셋 설정
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_MIRAI_DIR = RAW_DIR / "mirai"
+
+MIRAI_TRAIN_FILE = _MIRAI_DIR / "training-flow.csv"
+MIRAI_TEST_FILE  = _MIRAI_DIR / "test-flow.csv"
+
+MIRAI_RESULTS_DIR = RESULTS_DIR / "mirai"
+MIRAI_FIGURES_DIR = MIRAI_RESULTS_DIR / "figures"
+MIRAI_LOGS_DIR    = MIRAI_RESULTS_DIR / "logs"
+MIRAI_EXPORTS_DIR = MIRAI_RESULTS_DIR / "exports"
+
+# 수치형 피처 42개 (window_start/end, src/dst IP, src_port, flow_protocol 제외)
+MIRAI_ALL_FEATURES = [
+    # 포트 / 프로토콜
+    "dst_port",             "protocol",
+    # 패킷 수
+    "total_forward_packets", "total_backward_packets",
+    # 바이트 수
+    "total_length_of_forward_packets", "total_length_of_backward_packets",
+    "total_fhlen",          "total_bhlen",
+    # 패킷 길이
+    "forward_packet_length_max",  "forward_packet_length_min",
+    "forward_packet_length_mean", "forward_packet_length_std",
+    "backward_packet_length_max", "backward_packet_length_min",
+    "backward_packet_length_mean","backward_packet_length_std",
+    # 처리율
+    "fpkts_per_second",     "bpkts_per_second",     "flow_packets_per_second",
+    # 플로우 IAT
+    "flow_iat_mean",        "flow_iat_std",         "flow_iat_max",     "flow_iat_min",
+    # 순방향 IAT
+    "forward_iat_total",    "forward_iat_mean",     "forward_iat_std",
+    "forward_iat_max",      "forward_iat_min",
+    # 역방향 IAT
+    "backward_iat_total",   "backward_iat_mean",    "backward_iat_std",
+    "backward_iat_max",     "backward_iat_min",
+    # 플래그
+    "flow_fin",  "flow_syn",  "flow_rst",  "flow_psh",
+    "flow_ack",  "flow_urg",  "flow_ece",  "flow_cwr",
+]
+
+# log1p 적용 피처 (right-skewed, non-negative 연속형)
+MIRAI_LOG_FEATURES = [
+    "total_forward_packets",           "total_backward_packets",
+    "total_length_of_forward_packets", "total_length_of_backward_packets",
+    "total_fhlen",                     "total_bhlen",
+    "forward_packet_length_max",       "forward_packet_length_min",
+    "forward_packet_length_mean",      "forward_packet_length_std",
+    "backward_packet_length_max",      "backward_packet_length_min",
+    "backward_packet_length_mean",     "backward_packet_length_std",
+    "fpkts_per_second",                "bpkts_per_second",   "flow_packets_per_second",
+    "flow_iat_mean",                   "flow_iat_std",       "flow_iat_max",
+    "forward_iat_total",               "forward_iat_mean",   "forward_iat_std",  "forward_iat_max",
+    "backward_iat_total",              "backward_iat_mean",  "backward_iat_std", "backward_iat_max",
+]
+
+# UDBB 샘플링: 실제 데이터 규모가 작으므로 상한을 넉넉히 설정 → min() 로 자동 제한
+# training-flow 규모: benign=38586, reconnaissance=1617, action=581, infection=109
+MIRAI_UDBB_COUNTS = {
+    "benign":          10_000,
+    "reconnaissance":   1_617,
+    "action":             581,
+    "infection":          109,
+}
+
+# Kill Chain 단계 색상
+MIRAI_STEP_COLORS = {
+    "benign":          "#3498DB",
+    "reconnaissance":  "#9B59B6",
+    "action":          "#E74C3C",
+    "infection":       "#F39C12",
+}
+
+MIRAI_LITERATURE_BASELINES = {}
+
+
 # ── 데이터셋 설정 통합 접근자 ────────────────────────────────────────────────
 
 def get_dataset_config(name: str) -> dict:
@@ -314,5 +392,19 @@ def get_dataset_config(name: str) -> dict:
             logs_dir             = UNSW_LOGS_DIR,
             exports_dir          = UNSW_EXPORTS_DIR,
         )
+    elif name == "mirai":
+        return dict(
+            name                 = "mirai",
+            train_file           = MIRAI_TRAIN_FILE,
+            test_file            = MIRAI_TEST_FILE,
+            all_features         = MIRAI_ALL_FEATURES,
+            log_features         = MIRAI_LOG_FEATURES,
+            udbb_counts          = MIRAI_UDBB_COUNTS,
+            literature_baselines = MIRAI_LITERATURE_BASELINES,
+            step_colors          = MIRAI_STEP_COLORS,
+            figures_dir          = MIRAI_FIGURES_DIR,
+            logs_dir             = MIRAI_LOGS_DIR,
+            exports_dir          = MIRAI_EXPORTS_DIR,
+        )
     else:
-        raise ValueError(f"알 수 없는 데이터셋: {name!r}. 'cicids2018' 또는 'unsw_nb15' 중 선택하세요.")
+        raise ValueError(f"알 수 없는 데이터셋: {name!r}. 'cicids2018', 'unsw_nb15', 'mirai' 중 선택하세요.")
