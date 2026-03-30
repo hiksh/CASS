@@ -76,9 +76,10 @@ def pre_filter(
     avg_rank = {f: (tree_rank[f] + anova_rank[f]) / 2.0 for f in feature_names}
     sorted_feats = sorted(avg_rank.items(), key=lambda x: x[1])
 
-    rows = []
-    for rank, (feat, avg_r) in enumerate(sorted_feats[:n_top], start=1):
-        rows.append({
+    # 전체 피처 랭킹 (ANOVA/ExtraTrees 비교군이 전체에서 선택할 수 있도록)
+    all_rows = []
+    for rank, (feat, avg_r) in enumerate(sorted_feats, start=1):
+        all_rows.append({
             "Rank":             rank,
             "Feature":          feat,
             "Tree_Importance":  round(tree_imp[feat], 6),
@@ -86,10 +87,10 @@ def pre_filter(
             "Avg_Rank":         round(avg_r, 1),
         })
 
-    summary_df = pd.DataFrame(rows)
-    top_features = [r["Feature"] for r in rows]
+    full_summary_df = pd.DataFrame(all_rows)
+    top_features    = full_summary_df.head(n_top)["Feature"].tolist()
 
     print("\n  ── 상위 피처 요약 ──")
-    print(summary_df.to_string(index=False))
+    print(full_summary_df.head(n_top).to_string(index=False))
 
-    return top_features, summary_df
+    return top_features, full_summary_df

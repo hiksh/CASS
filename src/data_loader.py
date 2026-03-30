@@ -114,7 +114,8 @@ def preprocess(
 
     # Inf/NaN 처리
     X = X.replace({np.inf: np.nan, -np.inf: np.nan, -1: np.nan})
-    X = X.fillna(X.median())
+    X = X.fillna(X.median())   # 일반 케이스
+    X = X.fillna(0)            # 컬럼 전체가 -1/NaN인 경우 (예: Mirai backward_* 컬럼)
 
     # Percentile clipping
     if fit_scaler:

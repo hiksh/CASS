@@ -49,14 +49,13 @@ def build_comparison_groups(
         {group_name: [feature, ...]} 딕셔너리
     """
     N = len(best_features)
-    candidate_pool = filter_summary["Feature"].tolist()
     feat_set = set(feature_names)
     groups = {}
 
     # 1) CASS
     groups["cass"] = list(best_features)
 
-    # 2) ANOVA top-N  (pre-filter 풀 내 재정렬)
+    # 2) ANOVA top-N  (전체 피처 랭킹에서 선택)
     anova_top = (
         filter_summary
         .sort_values("ANOVA_F", ascending=False)
@@ -65,7 +64,7 @@ def build_comparison_groups(
     )
     groups["anova"] = anova_top
 
-    # 3) ExtraTrees top-N  (pre-filter 풀 내 재정렬)
+    # 3) ExtraTrees top-N  (전체 피처 랭킹에서 선택)
     tree_top = (
         filter_summary
         .sort_values("Tree_Importance", ascending=False)
@@ -74,12 +73,12 @@ def build_comparison_groups(
     )
     groups["extratrees"] = tree_top
 
-    # 4) Random N  (pre-filter 풀에서 무작위 선택)
+    # 4) Random N  (전체 피처에서 무작위 선택)
     rng = random.Random(RANDOM_SEED + 1000)
+    all_features_list = list(feature_names)
     for i in range(n_random):
         key = "random" if n_random == 1 else f"random_{i + 1}"
-        pool_size = len(candidate_pool)
-        sampled = sorted(rng.sample(candidate_pool, min(N, pool_size)))
+        sampled = sorted(rng.sample(all_features_list, min(N, len(all_features_list))))
         groups[key] = sampled
 
     # 5) Literature baselines
