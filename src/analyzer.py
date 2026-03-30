@@ -271,9 +271,14 @@ def plot_comparison_heatmap(metrics_df: pd.DataFrame, save_path) -> None:
     # ── annotation: 실제 값 ──────────────────────────────────────────────────
     annot = df_raw.copy().astype(object)
     for col in annot.columns:
-        annot[col] = annot[col].map(
-            lambda v: f"{v:.3f}" if pd.notna(v) else "N/A"
-        )
+        if col == "Cluster_Count":
+            annot[col] = annot[col].map(
+                lambda v: str(int(v)) if pd.notna(v) else "N/A"
+            )
+        else:
+            annot[col] = annot[col].map(
+                lambda v: f"{v:.3f}" if pd.notna(v) else "N/A"
+            )
 
     # ── 히트맵 ───────────────────────────────────────────────────────────────
     n_rows = len(df_norm)

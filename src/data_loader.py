@@ -17,7 +17,6 @@ from sklearn.preprocessing import RobustScaler
 from .config import (
     TRAIN_FILE, TEST_FILE, ALL_FEATURES, LOG_FEATURES,
     UDBB_COUNTS, PROCESSED_DIR, RANDOM_SEED,
-    UNSW_LOG_FEATURES,
 )
 
 

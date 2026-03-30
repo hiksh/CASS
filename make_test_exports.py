@@ -67,7 +67,7 @@ def udbb_sample_chunked(needed_cols: list) -> pd.DataFrame:
             buckets["benign"].append(rows.iloc[:need])
             counts["benign"] += min(len(rows), need)
 
-        for step in ("action", "infection", "installation"):
+        for step in [k for k in targets if k != "benign"]:
             if counts[step] < targets[step]:
                 rows = chunk[(chunk["attack_flag"] == 1) & (chunk["attack_step"] == step)]
                 need = targets[step] - counts[step]
@@ -103,6 +103,7 @@ def fit_preprocessor(df_train: pd.DataFrame, feature_cols: list):
     X = df_train[feature_cols].copy()
     X = X.replace({np.inf: np.nan, -np.inf: np.nan, -1: np.nan})
     X = X.fillna(X.median())
+    X = X.fillna(0)
 
     clip_bounds = {}
     for col in log_feats:
@@ -159,6 +160,7 @@ def process_test_chunked(
         X = chunk[feature_cols].copy()
         X = X.replace({np.inf: np.nan, -np.inf: np.nan, -1: np.nan})
         X = X.fillna(X.median())
+        X = X.fillna(0)
 
         # clip (훈련 기준 임계값 적용)
         for col, (lo, hi) in clip_bounds.items():

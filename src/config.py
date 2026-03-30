@@ -15,6 +15,7 @@ RESULTS_DIR   = BASE_DIR / "results"
 FIGURES_DIR   = RESULTS_DIR / "cicids2018" / "figures"
 LOGS_DIR      = RESULTS_DIR / "cicids2018" / "logs"
 EXPORTS_DIR   = RESULTS_DIR / "cicids2018" / "exports"
+ML_DIR        = RESULTS_DIR / "cicids2018" / "ml"
 
 TRAIN_FILE = RAW_DIR / "cicids2018" / "training-flow.csv"
 TEST_FILE  = RAW_DIR / "cicids2018" / "test-flow.csv"
@@ -186,6 +187,7 @@ UNSW_RESULTS_DIR = RESULTS_DIR / "unsw_nb15"
 UNSW_FIGURES_DIR = UNSW_RESULTS_DIR / "figures"
 UNSW_LOGS_DIR    = UNSW_RESULTS_DIR / "logs"
 UNSW_EXPORTS_DIR = UNSW_RESULTS_DIR / "exports"
+UNSW_ML_DIR      = UNSW_RESULTS_DIR / "ml"
 
 # 수치형 피처 39개 (protocol, service, state 범주형 제외)
 UNSW_ALL_FEATURES = [
@@ -280,6 +282,7 @@ MIRAI_RESULTS_DIR = RESULTS_DIR / "mirai"
 MIRAI_FIGURES_DIR = MIRAI_RESULTS_DIR / "figures"
 MIRAI_LOGS_DIR    = MIRAI_RESULTS_DIR / "logs"
 MIRAI_EXPORTS_DIR = MIRAI_RESULTS_DIR / "exports"
+MIRAI_ML_DIR      = MIRAI_RESULTS_DIR / "ml"
 
 # 수치형 피처 42개 (window_start/end, src/dst IP, src_port, flow_protocol, attack_* 제외)
 MIRAI_ALL_FEATURES = [
@@ -377,6 +380,7 @@ def get_dataset_config(name: str) -> dict:
             figures_dir          = FIGURES_DIR,
             logs_dir             = LOGS_DIR,
             exports_dir          = EXPORTS_DIR,
+            ml_dir               = ML_DIR,
         )
     elif name == "unsw_nb15":
         return dict(
@@ -391,6 +395,7 @@ def get_dataset_config(name: str) -> dict:
             figures_dir          = UNSW_FIGURES_DIR,
             logs_dir             = UNSW_LOGS_DIR,
             exports_dir          = UNSW_EXPORTS_DIR,
+            ml_dir               = UNSW_ML_DIR,
         )
     elif name == "mirai":
         return dict(
@@ -405,6 +410,7 @@ def get_dataset_config(name: str) -> dict:
             figures_dir          = MIRAI_FIGURES_DIR,
             logs_dir             = MIRAI_LOGS_DIR,
             exports_dir          = MIRAI_EXPORTS_DIR,
+            ml_dir               = MIRAI_ML_DIR,
         )
     else:
         raise ValueError(f"알 수 없는 데이터셋: {name!r}. 'cicids2018', 'unsw_nb15', 'mirai' 중 선택하세요.")

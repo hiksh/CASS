@@ -11,6 +11,8 @@ Cluster-Aware Feature Selection System 전체 파이프라인 실행기.
   python main.py --export                    # 비교군 CSV 내보내기
   python main.py --analyze                   # 8지표 히트맵 분석
   python main.py --export --analyze          # 전체 실행
+  python main.py --export --ml               # CSV 내보내기 + ML 평가
+  python main.py --ml                        # ML 평가만 (exports가 이미 있는 경우)
 """
 import argparse
 import numpy as np
@@ -21,12 +23,11 @@ import matplotlib
 
 matplotlib.rcParams["font.family"] = "Malgun Gothic"
 matplotlib.rcParams["axes.unicode_minus"] = False
-from scipy.stats import spearmanr
 from cuml.manifold import UMAP
 
 from src.config import (
     UMAP_PARAMS, UMAP_PARAMS_FAST,
-    RANDOM_SEED, SEARCH_MODE,
+    SEARCH_MODE,
     PILOT_MIN_SPEARMAN, N_RANDOM_BASELINE,
     get_dataset_config,
 )
@@ -37,6 +38,7 @@ from src.search_algo import (
 )
 from src.exporter import export_comparison_sets, build_comparison_groups
 from src.analyzer import analyze_comparison_groups, plot_comparison_heatmap
+from src.ml_runner import run_ml_evaluation
 
 
 # ── 로그 헬퍼 ────────────────────────────────────────────────────────────────
@@ -241,11 +243,12 @@ def main(args) -> None:
     FIGURES_DIR = ds["figures_dir"]
     LOGS_DIR    = ds["logs_dir"]
     EXPORTS_DIR = ds["exports_dir"]
+    ML_DIR      = ds["ml_dir"]
 
     for d in [FIGURES_DIR, LOGS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
 
-    total_stages = 4 + (1 if args.export else 0) + (1 if args.analyze else 0)
+    total_stages = 4 + (1 if args.export else 0) + (1 if args.analyze else 0) + (1 if args.ml else 0)
 
     print(_SEP)
     print("CASS — Cluster-Aware Feature Selection System")
@@ -256,6 +259,7 @@ def main(args) -> None:
     print(f"  Pilot    : {'ON' if args.pilot else 'OFF'}")
     print(f"  Export   : {'ON' if args.export else 'OFF'}")
     print(f"  Analyze  : {'ON' if args.analyze else 'OFF'}")
+    print(f"  ML       : {'ON' if args.ml else 'OFF'}")
     print(f"  Stages   : {total_stages}")
     print(_SEP)
 
@@ -409,6 +413,20 @@ def main(args) -> None:
                     metrics_df,
                     FIGURES_DIR / "comparison_heatmap.png",
                 )
+        stage += 1
+
+    # ── 7. [선택] ML 평가 ────────────────────────────────────────────────────
+    if args.ml:
+        _header(f"[{stage}/{total_stages}]", "ML 평가 (AutoGluon + CNN/LSTM)")
+        if not EXPORTS_DIR.exists() or not list(EXPORTS_DIR.glob("train_*.csv")):
+            print(f"  [경고] {EXPORTS_DIR} 에 train_*.csv 없음")
+            print("  --export 플래그를 함께 사용하거나 먼저 export를 실행하세요.")
+        else:
+            ml_results = run_ml_evaluation(
+                exports_dir=EXPORTS_DIR,
+                ml_dir=ML_DIR,
+                dataset_name=args.dataset,
+            )
 
     # ── 최종 요약 ────────────────────────────────────────────────────────────
     print(f"\n{_SEP}")
@@ -434,6 +452,8 @@ def main(args) -> None:
         _sub(f"Export 저장 위치  : {EXPORTS_DIR}")
     if args.analyze:
         _sub(f"히트맵 저장 위치  : {FIGURES_DIR / 'comparison_heatmap.png'}")
+    if args.ml:
+        _sub(f"ML 결과 저장 위치 : {ML_DIR}")
     print(_SEP)
 
 
@@ -470,6 +490,10 @@ def parse_args():
     parser.add_argument(
         "--analyze", action="store_true",
         help="비교군별 8개 UMAP 지표 계산 및 히트맵 저장",
+    )
+    parser.add_argument(
+        "--ml", action="store_true",
+        help="비교군별 ML 평가 (XGBoost/RF/LR/CNN/LSTM, binary F1) — exports가 없으면 --export와 함께 사용",
     )
     return parser.parse_args()
 
