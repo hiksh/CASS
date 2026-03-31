@@ -256,6 +256,24 @@ def plot_comparison_heatmap(metrics_df: pd.DataFrame, save_path) -> None:
 
     df_raw  = df_raw[col_order]
 
+    # ── 표시용 컬럼 이름 단축 (가독성) ──────────────────────────────────────
+    _LABEL_MAP = {
+        "Silhouette":         "Silhouette",
+        "Centroid_to_Benign": "Centroid",
+        "Global_Mean_Dist":   "Global\nDist",
+        "Boundary_Mean":      "BM",
+        "HDBSCAN_Noise_Rate": "Noise\nRate",
+        "Cluster_Count":      "Clusters",
+        "Cohesion_Dist":      "Cohesion",
+    }
+    def _short(c):
+        if c.startswith("Camouflage@"):
+            return "Cam@" + c.split("@")[1]
+        return _LABEL_MAP.get(c, c)
+
+    df_raw.columns  = [_short(c) for c in df_raw.columns]
+    df_norm.columns = df_raw.columns
+
     # ── 정규화 (0~1, 1 = best) ───────────────────────────────────────────────
     df_norm = df_raw.copy()
     for col in df_norm.columns:
@@ -277,7 +295,7 @@ def plot_comparison_heatmap(metrics_df: pd.DataFrame, save_path) -> None:
             )
         else:
             annot[col] = annot[col].map(
-                lambda v: f"{v:.3f}" if pd.notna(v) else "N/A"
+                lambda v: f"{v:.2f}" if pd.notna(v) else "N/A"
             )
 
     # ── 히트맵 ───────────────────────────────────────────────────────────────
@@ -294,7 +312,7 @@ def plot_comparison_heatmap(metrics_df: pd.DataFrame, save_path) -> None:
         linewidths=0.5,
         linecolor="white",
         ax=ax,
-        annot_kws={"size": 9, "weight": "bold"},
+        annot_kws={"size": 11, "weight": "bold"},
         cbar_kws={"label": "Normalized Score  (1 = best)", "shrink": 0.8},
     )
 
@@ -305,8 +323,8 @@ def plot_comparison_heatmap(metrics_df: pd.DataFrame, save_path) -> None:
     )
     ax.set_xlabel("")
     ax.set_ylabel("Feature Selection Method", fontsize=11)
-    ax.tick_params(axis="x", rotation=30, labelsize=9)
-    ax.tick_params(axis="y", rotation=0,  labelsize=10)
+    ax.tick_params(axis="x", rotation=0, labelsize=10)
+    ax.tick_params(axis="y", rotation=0, labelsize=11)
 
     # 그룹 구분선 (Separability | Camouflage | Cluster)
     for boundary in [len(sep_cols), len(sep_cols) + len(cam_cols)]:

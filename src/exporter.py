@@ -81,7 +81,10 @@ def build_comparison_groups(
         sampled = sorted(rng.sample(all_features_list, min(N, len(all_features_list))))
         groups[key] = sampled
 
-    # 5) Literature baselines
+    # 5) All features (전체 피처 사용)
+    groups["all"] = list(feature_names)
+
+    # 6) Literature baselines
     if literature_baselines is None:
         literature_baselines = LITERATURE_BASELINES
     for name, feats in literature_baselines.items():

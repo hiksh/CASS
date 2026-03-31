@@ -35,9 +35,9 @@ SEP2 = "-" * 65
 
 # 데이터셋별 기대 비교군 (파일이 없으면 자동으로 건너뜀)
 EXPECTED_GROUPS = {
-    "cicids2018": ["cass", "anova", "extratrees", "random", "lit_umar2024"],
-    "unsw_nb15":  ["cass", "anova", "extratrees", "random", "lit_yin2023"],
-    "mirai":      ["cass", "anova", "extratrees", "random"],
+    "cicids2018": ["cass", "anova", "extratrees", "random", "lit_umar2024", "all"],
+    "unsw_nb15":  ["cass", "anova", "extratrees", "random", "lit_yin2023", "all"],
+    "mirai":      ["cass", "anova", "extratrees", "random", "all"],
 }
 UMAP_GROUPS = ["umap2d", "umap3d"]
 

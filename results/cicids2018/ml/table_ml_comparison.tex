@@ -1,0 +1,22 @@
+% CICIDS2018 ML 분류 성능 비교표
+% 사용법: \usepackage{booktabs} 필요
+
+\begin{table}[htbp]
+\centering
+\caption{CICIDS2018 ML 분류 성능 비교 (Binary F1, \%)}
+\label{tab:ml_comparison}
+\begin{tabular}{lcccccc}
+\toprule
+방법 & 피처 수 & XGBoost & RF & CNN & LSTM & LogReg \\
+\midrule
+CASS (제안) & 16 & 93.68 & 93.12 & 90.51 & 92.17 & \textbf{74.29} \\
+umar2024~\cite{umar2024} & 12 & \textbf{93.75} & \textbf{93.43} & \textbf{91.58} & \textbf{93.37} & 72.51 \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+  \small
+  \item CASS는 BM 최대화를 목적함수로 선택된 피처 조합이며,
+        umar2024는 분류 성능 기반으로 선택된 12개 피처 조합이다.
+        두 방법의 피처 수가 상이함을 고려하여 해석해야 한다.
+\end{tablenotes}
+\end{table}

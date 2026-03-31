@@ -27,7 +27,12 @@ from pathlib import Path
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+)
 from xgboost import XGBClassifier
 
 import torch
@@ -214,7 +219,9 @@ def _train_torch(
     return model
 
 
-def _eval_torch(model: nn.Module, X_test: np.ndarray, y_test: np.ndarray) -> float:
+def _eval_torch(
+    model: nn.Module, X_test: np.ndarray, y_test: np.ndarray
+) -> tuple[float, np.ndarray]:
     """배치 단위 추론. X_test 전체를 GPU에 올리지 않습니다."""
     model.eval()
     loader = DataLoader(
@@ -226,7 +233,8 @@ def _eval_torch(model: nn.Module, X_test: np.ndarray, y_test: np.ndarray) -> flo
         for (xb,) in loader:
             p = (torch.sigmoid(model(xb.to(DEVICE))) >= 0.5).cpu().numpy()
             preds.extend(p.astype(int))
-    return float(f1_score(y_test, preds, average="binary", zero_division=0))
+    preds_arr = np.array(preds, dtype=np.int32)
+    return float(f1_score(y_test, preds_arr, average="binary", zero_division=0)), preds_arr
 
 
 # ── 비교군 단위 평가 ───────────────────────────────────────────────────────────
@@ -235,8 +243,13 @@ def _run_group(
     group_name: str,
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
-) -> dict[str, float]:
-    """비교군 하나에 대해 5개 모델 전부 훈련·평가합니다."""
+) -> tuple[dict[str, float], dict[str, np.ndarray]]:
+    """비교군 하나에 대해 5개 모델 전부 훈련·평가합니다.
+
+    Returns:
+        scores     : 모델명 → 전체 binary F1
+        preds_dict : 모델명 → test 예측값 배열 (per-step 분석용)
+    """
     feat_cols = [c for c in train_df.columns if c not in ("attack_flag", "attack_step")]
 
     X_train = train_df[feat_cols].values.astype(np.float32)
@@ -245,16 +258,18 @@ def _run_group(
     y_test  = test_df["attack_flag"].values.astype(np.int32)
     n_feat  = X_train.shape[1]
 
-    scores: dict[str, float] = {}
+    scores:     dict[str, float]      = {}
+    preds_dict: dict[str, np.ndarray] = {}
 
     # ── sklearn / XGBoost ────────────────────────────────────────────────────
     for display, clf in _make_sklearn_models():
         try:
             clf.fit(X_train, y_train)
-            y_pred = clf.predict(X_test)
+            y_pred = clf.predict(X_test).astype(np.int32)
             f1 = float(f1_score(y_test, y_pred, average="binary",
                                 pos_label=1, zero_division=0))
-            scores[display] = f1
+            scores[display]     = f1
+            preds_dict[display] = y_pred
             print(f"    {display:<15}: F1 = {f1:.4f}")
         except Exception as exc:
             print(f"    {display:<15}: 실패 — {exc}")
@@ -269,9 +284,10 @@ def _run_group(
 
     # ── CNN ───────────────────────────────────────────────────────────────────
     try:
-        cnn = _train_torch(_CNN1D(n_feat), X_tr, y_tr, X_vl, y_vl)
-        f1  = _eval_torch(cnn, X_test, y_test)
-        scores["CNN"] = f1
+        cnn        = _train_torch(_CNN1D(n_feat), X_tr, y_tr, X_vl, y_vl)
+        f1, y_pred = _eval_torch(cnn, X_test, y_test)
+        scores["CNN"]     = f1
+        preds_dict["CNN"] = y_pred
         print(f"    {'CNN':<15}: F1 = {f1:.4f}")
         del cnn
         if torch.cuda.is_available():
@@ -282,9 +298,10 @@ def _run_group(
 
     # ── LSTM ──────────────────────────────────────────────────────────────────
     try:
-        lstm = _train_torch(_LSTMNet(n_feat), X_tr, y_tr, X_vl, y_vl)
-        f1   = _eval_torch(lstm, X_test, y_test)
-        scores["LSTM"] = f1
+        lstm       = _train_torch(_LSTMNet(n_feat), X_tr, y_tr, X_vl, y_vl)
+        f1, y_pred = _eval_torch(lstm, X_test, y_test)
+        scores["LSTM"]     = f1
+        preds_dict["LSTM"] = y_pred
         print(f"    {'LSTM':<15}: F1 = {f1:.4f}")
         del lstm
         if torch.cuda.is_available():
@@ -293,7 +310,83 @@ def _run_group(
         print(f"    {'LSTM':<15}: 실패 — {exc}")
         scores["LSTM"] = float("nan")
 
-    return scores
+    return scores, preds_dict
+
+
+# ── Attack-step별 메트릭 ──────────────────────────────────────────────────────
+
+def _compute_per_step_metrics(
+    preds_dict: dict[str, np.ndarray],
+    y_test: np.ndarray,
+    attack_step: np.ndarray,
+) -> pd.DataFrame:
+    """모델별·attack_step별 accuracy / precision / recall / f1 을 계산합니다.
+
+    각 공격 단계(benign 제외)를 해당 단계 샘플 + 전체 benign 샘플로 평가합니다.
+    이 방식은 단계별 탐지 정밀도(false positive 포함)를 올바르게 반영합니다.
+    """
+    benign_mask = attack_step == "benign"
+    rows = []
+
+    for step in np.unique(attack_step):
+        if step == "benign":
+            continue   # benign 단계는 positive 샘플이 없어 binary F1이 무의미
+
+        step_mask = attack_step == step
+        # 평가 대상: 해당 단계 공격 + 전체 benign
+        eval_mask = step_mask | benign_mask
+        y_true    = y_test[eval_mask]
+        n_attack  = int(step_mask.sum())
+        n_benign  = int(benign_mask.sum())
+
+        for model_name, y_pred_full in preds_dict.items():
+            y_pred = y_pred_full[eval_mask]
+            rows.append({
+                "attack_step": step,
+                "model":       model_name,
+                "n_attack":    n_attack,
+                "n_benign":    n_benign,
+                "accuracy":    float(accuracy_score(y_true, y_pred)),
+                "precision":   float(precision_score(y_true, y_pred, average="binary", zero_division=0)),
+                "recall":      float(recall_score(y_true, y_pred, average="binary", zero_division=0)),
+                "f1":          float(f1_score(y_true, y_pred, average="binary", zero_division=0)),
+            })
+
+    return pd.DataFrame(rows)
+
+
+def _print_step_metrics(step_all: pd.DataFrame) -> None:
+    """per-step 메트릭을 비교군 × 모델 × step 형태로 콘솔에 출력합니다."""
+    SEP2 = "-" * 65
+    models = step_all["model"].unique()
+    metric_cols = ["precision", "recall", "f1"]
+
+    for group in step_all["group"].unique():
+        print(f"\n  ── [per-step] {group} ──")
+        gdf = step_all[step_all["group"] == group]
+
+        # 헤더: 모델명 × metric
+        header = f"  {'attack_step':<16}"
+        for m in models:
+            for mc in metric_cols:
+                header += f"  {m[:4]+'/'+mc[:3]:>10}"
+        print(header)
+        print(f"  {SEP2}")
+
+        for step in gdf["attack_step"].unique():
+            sdf = gdf[gdf["attack_step"] == step]
+            n_atk = int(sdf["n_attack"].iloc[0])
+            line  = f"  {step:<16}"
+            for m in models:
+                row = sdf[sdf["model"] == m]
+                if row.empty:
+                    line += "  " + "  ".join(["       N/A"] * len(metric_cols))
+                else:
+                    for mc in metric_cols:
+                        v = float(row[mc].iloc[0])
+                        line += f"  {v:>10.4f}"
+            line += f"  (n={n_atk:,})"
+            print(line)
 
 
 # ── 결과 시각화 ────────────────────────────────────────────────────────────────
@@ -437,7 +530,8 @@ def run_ml_evaluation(
 
     groups = [f.stem[len("train_"):] for f in train_files]
 
-    all_rows: list[dict] = []
+    all_rows:      list[dict]       = []
+    step_rows:     list[pd.DataFrame] = []
 
     for group in groups:
         train_path = exports_dir / f"train_{group}.csv"
@@ -451,9 +545,17 @@ def run_ml_evaluation(
         train_df = pd.read_csv(train_path)
         test_df  = pd.read_csv(test_path)
 
-        scores = _run_group(group, train_df, test_df)
+        scores, preds_dict = _run_group(group, train_df, test_df)
         scores["group"] = group
         all_rows.append(scores)
+
+        # per-step 메트릭 (attack_step 컬럼이 있을 때만)
+        if preds_dict and "attack_step" in test_df.columns:
+            y_test      = test_df["attack_flag"].values.astype(np.int32)
+            attack_step = test_df["attack_step"].values
+            step_df     = _compute_per_step_metrics(preds_dict, y_test, attack_step)
+            step_df.insert(0, "group", group)
+            step_rows.append(step_df)
 
     if not all_rows:
         print("  [경고] 평가된 비교군이 없습니다.")
@@ -466,6 +568,14 @@ def run_ml_evaluation(
     csv_path = ml_dir / "f1_results.csv"
     results_df.to_csv(csv_path)
     print(f"\n  F1 결과 CSV : {csv_path}")
+
+    # per-step 메트릭 저장 + 콘솔 출력
+    if step_rows:
+        step_all = pd.concat(step_rows, ignore_index=True)
+        step_csv = ml_dir / "step_metrics.csv"
+        step_all.to_csv(step_csv, index=False)
+        print(f"  Step 메트릭 CSV : {step_csv}")
+        _print_step_metrics(step_all)
 
     # 시각화
     _plot_heatmap(results_df, ml_dir / "f1_heatmap.png", dataset_name)

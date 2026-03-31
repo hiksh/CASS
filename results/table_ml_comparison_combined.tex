@@ -1,0 +1,21 @@
+% ML 분류 성능 비교표 (CICIDS2018 + UNSW-NB15)
+% 요구 패키지: \usepackage{booktabs}, \usepackage{multirow}
+
+\begin{table}[htbp]
+\centering
+\caption{ML 분류 성능 비교 (Binary F1, \%)}
+\label{tab:ml_combined}
+\begin{tabular}{llcrrrrr}
+\toprule
+데이터셋 & 방법 & 피처 수 & XGBoost & RF & CNN & LSTM & LogReg \\
+\midrule
+\multirow{2}{*}{CICIDS2018}
+  & CASS (제안)          & 16 & 93.68          & 93.12          & 90.51          & 92.17          & \textbf{74.29} \\
+  & umar2024~\cite{umar2024} & 12 & \textbf{93.75} & \textbf{93.43} & \textbf{91.58} & \textbf{93.37} & 72.51          \\
+\midrule
+\multirow{2}{*}{UNSW-NB15}
+  & CASS (제안)          & 17 & 58.96          & 58.96          & 45.62          & \textbf{57.90} & \textbf{42.85} \\
+  & yin2023~\cite{yin2023}   & 20 & \textbf{59.24} & \textbf{59.06} & \textbf{49.86} & 55.44          & 40.06          \\
+\bottomrule
+\end{tabular}
+\end{table}
