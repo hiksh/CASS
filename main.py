@@ -71,9 +71,11 @@ def plot_umap_best(
     idx = [feat_list.index(f) for f in best_features]
     X_sub = X_scaled[:, idx]
 
-    print(f"\n[UMAP] 최적 {len(best_features)}개 피처 최종 시각화 ...")
+    nc = UMAP_PARAMS.get("n_components", 2)
+    print(f"\n[UMAP] 최적 {len(best_features)}개 피처 최종 시각화 (n_components={nc}) ...")
     reducer = UMAP(**UMAP_PARAMS)
-    emb = np.asarray(reducer.fit_transform(X_sub))
+    emb_full = np.asarray(reducer.fit_transform(X_sub))
+    emb = emb_full[:, :2]   # 시각화는 항상 첫 2차원
 
     STEP_COLORS = step_colors or {
         "benign":       "#3498DB",
@@ -123,11 +125,12 @@ def plot_umap_best(
     _sub(f"저장: {save_path}")
 
     emb_csv = save_path.parent / "best_subset_umap_embeddings.csv"
-    emb_df = pd.DataFrame(emb, columns=["UMAP-1", "UMAP-2"])
+    col_names = [f"UMAP-{i+1}" for i in range(emb_full.shape[1])]
+    emb_df = pd.DataFrame(emb_full, columns=col_names)
     emb_df["attack_flag"] = y
     emb_df["attack_step"] = attack_step
     emb_df.to_csv(emb_csv, index=False)
-    _sub(f"임베딩 저장: {emb_csv}")
+    _sub(f"임베딩 저장: {emb_csv}  ({emb_full.shape[1]}D)")
 
 
 def plot_pilot(pilot_df: pd.DataFrame, spearman_r: float, save_path) -> None:
@@ -259,15 +262,20 @@ def main(args) -> None:
     print(_SEP)
     print("CASS — Cluster-Aware Feature Selection System")
     print(_SEP2)
-    print(f"  Dataset  : {args.dataset}")
-    print(f"  Mode     : {args.mode}")
-    print(f"  Top-K    : {args.top_k}")
-    print(f"  Pilot    : {'ON' if args.pilot else 'OFF'}")
-    print(f"  Export   : {'ON' if args.export else 'OFF'}")
-    print(f"  UMAP Emb : {'ON' if args.umap else 'OFF'}")
-    print(f"  Analyze  : {'ON' if args.analyze else 'OFF'}")
-    print(f"  ML       : {'ON' if args.ml else 'OFF'}")
-    print(f"  Stages   : {total_stages}")
+    # ── n_components 적용 ───────────────────────────────────────────────────
+    UMAP_PARAMS["n_components"]      = args.n_components
+    UMAP_PARAMS_FAST["n_components"] = args.n_components
+
+    print(f"  Dataset      : {args.dataset}")
+    print(f"  Mode         : {args.mode}")
+    print(f"  Top-K        : {args.top_k}")
+    print(f"  n_components : {args.n_components}")
+    print(f"  Pilot        : {'ON' if args.pilot else 'OFF'}")
+    print(f"  Export       : {'ON' if args.export else 'OFF'}")
+    print(f"  UMAP Emb     : {'ON' if args.umap else 'OFF'}")
+    print(f"  Analyze      : {'ON' if args.analyze else 'OFF'}")
+    print(f"  ML           : {'ON' if args.ml else 'OFF'}")
+    print(f"  Stages       : {total_stages}")
     print(_SEP)
 
     # ── 1. 데이터 로드 & 전처리 ─────────────────────────────────────────────
@@ -409,13 +417,15 @@ def main(args) -> None:
         if not best_subset:
             print(f"\n[{stage}/{total_stages}] [경고] 최적 부분집합이 없어 UMAP Export를 건너뜁니다.")
         else:
-            _header(f"[{stage}/{total_stages}]", "UMAP 임베딩 Export (2D / 3D)")
+            nc = args.n_components
+            _header(f"[{stage}/{total_stages}]", f"UMAP 임베딩 Export ({nc}D)")
             export_umap_embeddings(
                 X_scaled, y, attack_step, feature_names,
                 best_subset, scaler, clip_params,
                 export_dir=EXPORTS_DIR,
                 test_file=ds["test_file"],
                 log_features=ds["log_features"],
+                n_components_list=[nc],
             )
         stage += 1
 
@@ -476,8 +486,8 @@ def main(args) -> None:
     if args.export or args.umap:
         _sub(f"Export 저장 위치  : {EXPORTS_DIR}")
     if args.umap:
-        _sub(f"  - train_umap2d.csv / test_umap2d.csv")
-        _sub(f"  - train_umap3d.csv / test_umap3d.csv")
+        nc = args.n_components
+        _sub(f"  - train_umap{nc}d.csv / test_umap{nc}d.csv")
     if args.analyze:
         _sub(f"히트맵 저장 위치  : {FIGURES_DIR / 'comparison_heatmap.png'}")
     if args.ml:
@@ -506,6 +516,11 @@ def parse_args():
     parser.add_argument(
         "--n-subsets", type=int, default=None, dest="n_subsets",
         help="random 모드에서 평가할 부분집합 수",
+    )
+    parser.add_argument(
+        "--n-components", type=int, default=2, dest="n_components",
+        choices=[2, 5, 10, 15],
+        help="UMAP 차원 수 (fast/full 스크리닝 및 export에 동일 적용)",
     )
     parser.add_argument(
         "--pilot", action="store_true",
